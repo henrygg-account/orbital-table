@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Point Calibration</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0a0d0d; color: #dde3e4; overflow: hidden; font-family: ui-monospace, Menlo, monospace; }
+  canvas { position: fixed; inset: 0; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// Manual calibration for when the camera can't see the screen (polarizer film): stand the EARTH piece on each target.
+// When it has sat still for 1.5 s the camera position is recorded and the next target shows. After the last target
+// the points go to live.py (POST /calibrate_points), which fits the camera -> screen mapping with parallax.
+// Keys: space = take this point now, backspace = redo the previous point, r = start over.
+// Same layout as demo.html: the TV's 1428.5 x 803.5 mm fill the window, centred.
+const SW = 1428.5, SH = 803.5, ROLE = 'earth', HOLD_MS = 1500, STILL = .0015, MOVED = .03;
+const TARGETS = [];
+for (const y of [110, SH / 2, SH - 110]) for (const x of [110, SW / 2, SW - 110]) TARGETS.push([x, y]);
+const cv = document.getElementById('c'), g = cv.getContext('2d');
+let S = 1, ox = 0, oy = 0;
+function layout() {
+  cv.width = innerWidth * devicePixelRatio; cv.height = innerHeight * devicePixelRatio;
+  cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px';
+  S = Math.min(innerWidth / SW, innerHeight / SH); ox = innerWidth / 2 - SW / 2 * S; oy = innerHeight / 2 - SH / 2 * S;
+}
+addEventListener('resize', layout); layout();
+const px = (x, y) => [ox + x * S, oy + y * S];
+
+let feed = null, feedAt = -1e9;
+new EventSource('/events').onmessage = e => { try { feed = JSON.parse(e.data); feedAt = performance.now(); } catch {} };
+
+let pts = [], still = null, msg = '', done = null;
+function piece() { const p = feed?.pieces?.[ROLE]; return p && p.seen_ago < .4 ? p : null; }
+function take() { const p = piece(); if (!p || pts.length >= TARGETS.length) return; const [x, y] = TARGETS[pts.length]; pts.push({ u: p.u, v: p.v, x_mm: x, y_mm: y, role: ROLE }); still = null; if (pts.length === TARGETS.length) send(); }
+async function send() {
+  msg = 'Fitting...';
+  try { done = await (await fetch('/calibrate_points', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: pts }) })).json(); }
+  catch (e) { done = { ok: false, error: String(e) }; }
+  msg = done.ok ? `Calibrated from ${done.points} points. Fit error ${done.rms_mm} mm. Press r to redo, or open demo.html.` : `Failed: ${done.error}. Press r to start over.`;
+}
+addEventListener('keydown', e => {
+  if (e.key === ' ') take();
+  if (e.key === 'Backspace' && pts.length && !done) { pts.pop(); still = null; }
+  if (e.key === 'r') { pts = []; still = null; done = null; msg = ''; }
+});
+
+function tick(now) {
+  const p = piece(), live = now - feedAt < 1500;
+  if (!done && p && pts.length < TARGETS.length) {
+    const last = pts[pts.length - 1], moved = !last || Math.hypot(p.u - last.u, p.v - last.v) > MOVED;   // must move off the previous target
+    if (!moved) still = null;
+    else if (!still || Math.hypot(p.u - still.u, p.v - still.v) > STILL) still = { u: p.u, v: p.v, t: now };
+    else if (now - still.t > HOLD_MS) take();
+  } else if (!done) still = null;
+
+  g.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  g.fillStyle = '#0a0d0d'; g.fillRect(0, 0, innerWidth, innerHeight);
+  g.strokeStyle = '#5c6b70'; g.lineWidth = 1; g.strokeRect(...px(0, 0), SW * S, SH * S);
+  TARGETS.forEach(([x, y], i) => {                                 // taken targets dim, the current one large
+    const [cx, cy] = px(x, y), cur = i === pts.length && !done, r = 33 * S;
+    g.strokeStyle = i < pts.length ? '#3d4a4e' : cur ? '#ffffff' : '#2a3336'; g.lineWidth = cur ? 3 : 1.5;
+    g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.moveTo(cx - r * 1.6, cy); g.lineTo(cx + r * 1.6, cy); g.moveTo(cx, cy - r * 1.6); g.lineTo(cx, cy + r * 1.6); g.stroke();
+    if (cur && still) { g.strokeStyle = '#0ee3a6'; g.lineWidth = 6; g.beginPath(); g.arc(cx, cy, r + 8 * S, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, (now - still.t) / HOLD_MS)); g.stroke(); }
+  });
+  const text = msg || (!live ? 'No camera feed. Start live.py and open this page from it.'
+    : `Stand the EARTH piece centred on the bright target (${pts.length + 1} of ${TARGETS.length}). Hold still. ${p ? '' : ' Earth not seen.'}   space = take now · backspace = redo · r = restart`);
+  g.fillStyle = '#dde3e4'; g.font = `${Math.max(13, 11 * S)}px ui-monospace, Menlo, monospace`; g.textAlign = 'center';
+  g.fillText(text, ...px(SW / 2, SH / 2 + 95));
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

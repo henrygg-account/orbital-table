@@ -1,0 +1,22 @@
+{
+ "screen_mm": [
+  1428.5,
+  803.5
+ ],
+ "camera_height_mm": 2200,
+ "map": {},
+ "roles": {
+  "earth": {
+   "count": 1,
+   "height_mm": 32
+  },
+  "seldon-1": {
+   "count": 1,
+   "height_mm": 38
+  },
+  "seldon-2": {
+   "count": 1,
+   "height_mm": 38
+  }
+ }
+}

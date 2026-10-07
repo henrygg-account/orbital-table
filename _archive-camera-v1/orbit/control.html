@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tracker Control</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Michroma&display=swap">
+<style>
+  :root { --bg:#02050a; --panel:#06101a; --line:#12303f; --cy:#4fd8ff; --tx:#cfe9f5; --dim:#6b8696; --ok:#7dffb0; --warn:#ffb13b; --bad:#ff5a5a; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; background:var(--bg); color:var(--tx); font:12px "JetBrains Mono",monospace; }
+  header { display:flex; align-items:center; gap:16px; padding:10px 16px; border-bottom:1px solid var(--line); }
+  header h1 { font:14px Michroma,sans-serif; color:var(--cy); margin:0; letter-spacing:.05em; }
+  header a { color:var(--cy); text-decoration:none; border:1px solid var(--line); padding:4px 10px; }
+  header a:hover { background:#0a2230; }
+  #conn { margin-left:auto; }
+  main { display:grid; grid-template-columns:minmax(0,1.6fr) minmax(300px,1fr); gap:14px; padding:14px 16px; }
+  @media (max-width:900px) { main { grid-template-columns:1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--cy); padding:10px 12px; margin-bottom:14px; }
+  h2 { font:11px Michroma,sans-serif; color:var(--cy); margin:0 0 8px; letter-spacing:.06em; font-weight:400; }
+  #stage { position:relative; background:#000; line-height:0; border:1px solid var(--line); }
+  #stage img { width:100%; display:block; user-select:none; -webkit-user-drag:none; }
+  #stage.pick { cursor:crosshair; outline:2px solid var(--warn); }
+  #dots { position:absolute; inset:0; pointer-events:none; }
+  .dot { position:absolute; width:12px; height:12px; margin:-6px 0 0 -6px; border:2px solid var(--warn); border-radius:50%; background:rgba(255,177,59,.35); }
+  .dot b { position:absolute; left:12px; top:-4px; font:600 11px "JetBrains Mono",monospace; color:var(--warn); }
+  #noimg { position:absolute; inset:0; display:none; align-items:center; justify-content:center; color:var(--dim); line-height:1.4; }
+  #prompt { min-height:18px; margin-top:8px; color:var(--warn); }
+  button { font:inherit; color:var(--tx); background:#0a1b27; border:1px solid var(--line); padding:6px 10px; cursor:pointer; }
+  button:hover { border-color:var(--cy); }
+  button.on { background:#3a2a08; border-color:var(--warn); color:var(--warn); }
+  input, select { font:inherit; color:var(--tx); background:#02080e; border:1px solid var(--line); padding:5px 6px; }
+  input[type=number] { width:60px; } input[type=text] { width:110px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0; }
+  .slider { display:grid; grid-template-columns:90px 1fr 56px; gap:8px; align-items:center; margin:6px 0; }
+  .slider input[type=range] { width:100%; accent-color:var(--cy); }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:2px 12px; }
+  .kv span:nth-child(odd) { color:var(--dim); }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  table { width:100%; border-collapse:collapse; }
+  td, th { text-align:left; padding:3px 6px 3px 0; font-weight:400; }
+  th { color:var(--dim); }
+  #log { max-height:240px; overflow:auto; line-height:1.55; }
+  #log div { color:var(--tx); } #log .t { color:var(--dim); }
+  .small { color:var(--dim); font-size:11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TRACKER CONTROL</h1>
+  <a href="/">Orbit demo &rarr;</a>
+  <span id="conn" class="warn">connecting...</span>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>LIVE PREVIEW</h2>
+      <div id="stage">
+        <img id="img" alt="preview" draggable="false">
+        <div id="dots"></div>
+        <div id="noimg">No preview available.<br>Is the tracker running?</div>
+      </div>
+      <div id="prompt"></div>
+      <div class="row">
+        <button id="bCorners">Set corners</button>
+        <button id="bBg">Learn background</button>
+        <span class="small" id="calInfo"></span>
+      </div>
+      <div class="row">
+        <span>Learn color:</span>
+        <select id="pieceSel"></select>
+        <input type="text" id="pieceName" placeholder="or type name">
+        <button id="bLearn">Learn color</button>
+        <span class="small">then click the piece on the preview</span>
+      </div>
+    </section>
+    <section>
+      <h2>EVENTS</h2>
+      <div id="log"><span class="small">no events yet</span></div>
+    </section>
+  </div>
+  <div>
+    <section>
+      <h2>TRACKER</h2>
+      <div class="kv" id="health"></div>
+    </section>
+    <section>
+      <h2>PIECES</h2>
+      <table><thead><tr><th>piece</th><th>state</th><th>cell</th><th>conf</th></tr></thead><tbody id="pieces"></tbody></table>
+    </section>
+    <section>
+      <h2>CAMERA</h2>
+      <div class="slider"><span>exposure ms</span><input type="range" id="sExp" min="0.5" max="40" step="0.1" value="8"><span id="vExp"></span></div>
+      <div class="slider"><span>gain</span><input type="range" id="sGain" min="0" max="100" step="1" value="0"><span id="vGain"></span></div>
+      <div class="slider"><span>focus</span><input type="range" id="sFocus" min="0" max="1023" step="1" value="488"><span id="vFocus"></span></div>
+      <div class="small" id="camNow"></div>
+    </section>
+    <section>
+      <h2>DATASET</h2>
+      <div class="row">
+        <button id="bCap">Capture</button>
+        <button id="bAuto">Auto every 1 s</button>
+        <span class="small" id="capCount">-</span>
+      </div>
+    </section>
+    <section>
+      <h2>BOARD</h2>
+      <div class="row">
+        <span>grid</span><input type="number" id="gCols" min="1" max="52" value="8"> &times; <input type="number" id="gRows" min="1" max="52" value="6">
+      </div>
+      <div class="row">
+        <span>board in</span><input type="number" id="bW" min="1" step="0.5" value="48"> &times; <input type="number" id="bH" min="1" step="0.5" value="36">
+        <button id="bGrid">Apply</button>
+      </div>
+    </section>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let feed = {}, feedAt = 0, meta = { scale: 1, pad: 0, frame_w: 1920, frame_h: 1080 };
+let mode = null, corners = [];                       // mode: 'corners' | 'color' | null
+let learnPiece = '';
+const NAMES = ['TL (top-left)', 'TR (top-right)', 'BR (bottom-right)', 'BL (bottom-left)'];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+async function cmd(obj, note) {
+  try {
+    const r = await fetch('/cmd', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'failed');
+    if (note) say(note, 'ok');
+  } catch (e) { say('Command failed: ' + e.message, 'bad'); }
+}
+let sayTimer = 0;
+function say(msg, cls) {
+  const p = $('prompt'); p.className = cls || 'warn'; p.textContent = msg;
+  clearTimeout(sayTimer); if (!mode) sayTimer = setTimeout(() => { if (!mode) p.textContent = ''; }, 4000);
+}
+
+// ---- preview ----
+const img = $('img');
+// Live MJPEG stream from the bridge; if it drops, show the notice and reconnect after a moment.
+function startStream() {
+  img.onload = () => { $('noimg').style.display = 'none'; };
+  img.onerror = () => { $('noimg').style.display = 'flex'; setTimeout(startStream, 1500); };
+  img.src = '/preview.mjpg?t=' + Date.now();
+}
+startStream();
+async function pollMeta() {
+  try { const r = await fetch('/preview.json?t=' + Date.now()); if (r.ok) { const j = await r.json(); if (j && j.scale) meta = j; } } catch (e) {}
+}
+setInterval(pollMeta, 2000); pollMeta();
+
+// preview px (display) -> camera px
+function toCamera(ev) {
+  const r = img.getBoundingClientRect();
+  const nw = img.naturalWidth || r.width, nh = img.naturalHeight || r.height;
+  const px = (ev.clientX - r.left) * nw / r.width, py = (ev.clientY - r.top) * nh / r.height;
+  return { px, py, x: px / meta.scale - meta.pad, y: py / meta.scale - meta.pad, dx: ev.clientX - r.left, dy: ev.clientY - r.top };
+}
+function setMode(m) {
+  mode = m; corners = []; $('dots').innerHTML = '';
+  $('stage').classList.toggle('pick', !!m);
+  $('bCorners').classList.toggle('on', m === 'corners');
+  $('bLearn').classList.toggle('on', m === 'color');
+  updatePrompt();
+}
+function updatePrompt() {
+  const p = $('prompt'); p.className = 'warn';
+  if (mode === 'corners') p.textContent = `Click corner ${corners.length + 1}/4: ${NAMES[corners.length]}  (Esc to cancel)`;
+  else if (mode === 'color') p.textContent = `Click the "${learnPiece}" piece on the preview  (Esc to cancel)`;
+  else p.textContent = '';
+}
+function addDot(x, y, label) {
+  const d = document.createElement('div'); d.className = 'dot'; d.style.left = x + 'px'; d.style.top = y + 'px';
+  d.innerHTML = '<b>' + label + '</b>'; $('dots').appendChild(d);
+}
+$('stage').addEventListener('click', ev => {
+  if (!mode) return;
+  if (!img.naturalWidth) { say('No preview image yet', 'bad'); return; }
+  const c = toCamera(ev);
+  if (mode === 'corners') {
+    corners.push([Math.round(c.x), Math.round(c.y)]);
+    addDot(c.dx, c.dy, ['TL', 'TR', 'BR', 'BL'][corners.length - 1]);
+    if (corners.length === 4) {
+      const cs = corners.slice(); setMode(null);
+      cmd({ cmd: 'set_corners', corners: cs }, 'Corners sent: ' + JSON.stringify(cs));
+    } else updatePrompt();
+  } else if (mode === 'color') {
+    const name = learnPiece; setMode(null);
+    cmd({ cmd: 'learn_color', piece: name, x: Math.round(c.x), y: Math.round(c.y) }, `Learning color for "${name}" at (${Math.round(c.x)}, ${Math.round(c.y)})`);
+  }
+});
+addEventListener('keydown', e => { if (e.key === 'Escape' && mode) { setMode(null); say('Cancelled'); } });
+
+$('bCorners').onclick = () => { if (mode === 'corners') return setMode(null); setMode('corners'); };
+$('bBg').onclick = () => cmd({ cmd: 'learn_background' }, 'Learning background (keep the board clear)...');
+$('bLearn').onclick = () => {
+  if (mode === 'color') return setMode(null);
+  const name = ($('pieceName').value.trim() || $('pieceSel').value || '').trim();
+  if (!name) { say('Choose or type a piece name first', 'bad'); return; }
+  learnPiece = name; setMode('color');
+};
+$('bCap').onclick = () => cmd({ cmd: 'capture' }, 'Frame captured');
+$('bAuto').onclick = () => cmd({ cmd: 'capture_auto', interval: (feed.capture && feed.capture.auto) ? 0 : 1 });
+$('bGrid').onclick = () => {
+  const c = +$('gCols').value, r = +$('gRows').value, w = +$('bW').value, h = +$('bH').value;
+  if (!(c >= 1 && r >= 1 && w > 0 && h > 0)) { say('Invalid grid / board size', 'bad'); return; }
+  cmd({ cmd: 'set_grid', grid: [c, r], board_in: [w, h] }, `Grid ${c}x${r}, board ${w}x${h} in`);
+};
+
+// ---- camera sliders (debounced) ----
+const sl = { exposure_ms: $('sExp'), gain: $('sGain'), focus: $('sFocus') }, vals = { exposure_ms: $('vExp'), gain: $('vGain'), focus: $('vFocus') };
+let camTimer = 0, camTouched = 0;
+function showSl() { vals.exposure_ms.textContent = (+sl.exposure_ms.value).toFixed(1); vals.gain.textContent = sl.gain.value; vals.focus.textContent = sl.focus.value; }
+for (const k in sl) sl[k].addEventListener('input', () => {
+  showSl(); camTouched = Date.now(); clearTimeout(camTimer);
+  camTimer = setTimeout(() => cmd({ cmd: 'camera', exposure_ms: +sl.exposure_ms.value, gain: +sl.gain.value, focus: +sl.focus.value }), 250);
+});
+showSl();
+let slSynced = false;
+function syncSliders(cam) {
+  if (!cam || Date.now() - camTouched < 3000) return;
+  const set = (k, v) => { if (Number.isFinite(v) && document.activeElement !== sl[k]) sl[k].value = v; };
+  if (!slSynced) { set('exposure_ms', cam.exposure_ms); set('gain', cam.gain); set('focus', cam.focus); slSynced = true; showSl(); }
+}
+
+// ---- status ----
+const evLog = [];
+function fmtT(t) { const d = new Date((t || Date.now() / 1000) * 1000); return d.toTimeString().slice(0, 8); }
+function renderLog() {
+  $('log').innerHTML = evLog.length ? evLog.map(e => `<div><span class="t">${fmtT(e.t)}</span> ${esc(e.type)} <b>${esc(e.piece)}</b> ${e.from ? esc(e.from) + ' &rarr; ' : ''}${esc(e.cell || '')}${e.jump ? ' <span class="warn">jump</span>' : ''}</div>`).join('') : '<span class="small">no events yet</span>';
+}
+function renderFeed() {
+  const f = feed, age = (performance.now() - feedAt) / 1000, live = feedAt && age < 1.5;
+  $('conn').className = live ? 'ok' : 'bad';
+  $('conn').textContent = live ? 'LIVE' : 'TRACKER OFFLINE';
+  const cam = f.camera || {};
+  const row = (k, v, c) => `<span>${k}</span><span class="${c || ''}">${v}</span>`;
+  $('health').innerHTML = [
+    row('source', esc(f.source || '-')),
+    row('fps', Number.isFinite(f.fps) ? f.fps.toFixed(1) : '-', Number.isFinite(f.fps) && f.fps < 15 ? 'warn' : ''),
+    row('calibrated', f.calibrated ? 'yes' : (f.calibrated === false ? 'NOT CALIBRATED' : '-'), f.calibrated ? 'ok' : (f.calibrated === false ? 'bad' : '')),
+    row('calib mode', esc(f.calib || '-')),
+    row('bumped', f.bumped ? 'YES - recalibrate' : 'no', f.bumped ? 'bad' : ''),
+    row('grid', f.grid ? f.grid.join(' x ') + ' cells' : '-'),
+    row('board', f.board_in ? f.board_in.join(' x ') + ' in' : '-'),
+    row('camera', cam.name ? esc(cam.name) + (cam.ok === false ? ' (ERROR)' : '') : '-', cam.ok === false ? 'bad' : ''),
+    row('feed age', feedAt ? age.toFixed(2) + ' s' : '-', live ? '' : 'bad'),
+  ].join('');
+  $('calInfo').textContent = f.calibrated ? 'calibrated (' + (f.calib || '?') + ')' : (f.calibrated === false ? 'NOT calibrated' : '');
+  $('camNow').textContent = cam.exposure_ms != null ? `current: ${(+cam.exposure_ms).toFixed(1)} ms, gain ${cam.gain}, focus ${cam.focus}` : '';
+  syncSliders(cam);
+  const cp = f.capture;
+  $('bAuto').classList.toggle('on', !!(cp && cp.auto));
+  $('capCount').textContent = cp ? `${cp.count} saved` + (cp.auto ? ` (auto, ${cp.interval} s)` : '') : 'n/a';
+  if (f.grid && document.activeElement.tagName !== 'INPUT' && !renderFeed.gset) { $('gCols').value = f.grid[0]; $('gRows').value = f.grid[1]; if (f.board_in) { $('bW').value = f.board_in[0]; $('bH').value = f.board_in[1]; } renderFeed.gset = true; }
+  const pcs = f.pieces || {}, names = Object.keys(pcs);
+  $('pieces').innerHTML = names.length ? names.map(n => {
+    const p = pcs[n], c = p.state === 'tracked' ? 'ok' : p.state === 'held' ? 'warn' : 'bad';
+    return `<tr><td>${esc(n)}</td><td class="${c}">${esc(p.state || 'tracked')}</td><td>${esc(p.cell || '-')}</td><td>${Number.isFinite(p.conf) ? p.conf.toFixed(2) : '-'}</td></tr>`;
+  }).join('') : '<tr><td colspan="4" class="small">no pieces on board</td></tr>';
+  const sel = $('pieceSel'), want = names.join('|');
+  if (sel.dataset.names !== want) {
+    const cur = sel.value; sel.dataset.names = want;
+    sel.innerHTML = names.map(n => `<option>${esc(n)}</option>`).join('') || '<option value="">(none)</option>';
+    if (names.includes(cur)) sel.value = cur;
+  }
+}
+try {
+  const es = new EventSource('/events');
+  es.onmessage = e => {
+    try {
+      const m = JSON.parse(e.data);
+      feed = m; feedAt = performance.now();
+      if (m.age != null && m.age > 1.5) feedAt = performance.now() - m.age * 1000;
+      for (const ev of (m.events || [])) { evLog.unshift(ev); }
+      if (evLog.length > 20) evLog.length = 20;
+      if (m.events && m.events.length) renderLog();
+    } catch (err) {}
+  };
+} catch (e) {}
+setInterval(renderFeed, 200); renderFeed();
+</script>
+</body>
+</html>

@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbital Table Demo</title>
+<link rel="stylesheet" href="gg-table.css">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  canvas { display: block; }
+  .lbl { position: fixed; pointer-events: none; transform: translate(-50%, 0); white-space: nowrap; text-align: center; line-height: 1.35; font-family: var(--font-mono); text-transform: uppercase; }
+  #feed { position: fixed; display: none; top: 12px; left: 12px; width: 8px; height: 8px; border-radius: 50%; background: var(--gg-fog-300); }
+  #cal { position: fixed; inset: 0; background: #000; display: none; }
+  #cal img { position: fixed; image-rendering: pixelated; background: #fff; box-sizing: content-box; }
+  #calmsg { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); font-family: var(--font-mono); font-size: 16px; letter-spacing: .14em; color: #fff; text-align: center; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="feed"></div><div id="note" class="mt mt-foot"></div>
+<div id="cal"><div id="calmsg"></div></div>
+<img id="lockup" src="assets/gg-logo-full-light.png" alt="General Galactic">
+
+<script type="module">
+import * as THREE from 'three';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+const { createModes } = await import('./modes.js?v=' + Date.now());   // cache-bust: the local server sends no caching headers
+
+// ---------------------------------------------------------------------------
+// Everything is in TV-screen millimetres (origin top-left, y down); world = (x, -y).
+// The printed pieces stand on the glass, so the page draws only what belongs *around* them.
+// ---------------------------------------------------------------------------
+let SW = 1428.5, SH = 803.5;
+const ROLES = {
+  earth:      { name: 'EARTH' },
+  moon:       { name: 'MOON' },
+  'seldon-1': { name: 'SELDON-1', hex: '#dde3e4' },   // fog-100 accent dot
+  'seldon-2': { name: 'SELDON-2', hex: '#8a969a' },   // fog-300 accent dot
+  iss:        { name: 'ISS', hex: '#b8c1c3' },
+};
+const SATS = ['seldon-1', 'seldon-2'];   // ISS parked for now (add 'iss' back here to show it)
+// Piece sizes for the 65" TV (Oct 5 plan): Earth and Moon on ~66 mm bases, Seldons 150 mm wingtip to
+// wingtip. Not to scale with each other or with the orbits. Sphere sizes are a guess until the prints exist.
+const BASE_MM = { earth: 66, moon: 66, 'seldon-1': 66, 'seldon-2': 66, iss: 70 };
+const EARTH_SPHERE_R = 31, MOON_SPHERE_R = 22, SELDON_SCALE = 1.5;          // mm; Seldon model was 100 mm span
+const DEMO = { earth: [330, 400], moon: [1080, 400], 'seldon-1': [700, 220], 'seldon-2': [940, 220] };
+const Q = new URLSearchParams(location.search);
+const ORB_SELDON_SCALE = +(Q.get('seldonscale') ?? .5);   // orbits view: Seldon models 50 mm span
+const MARG = 24, END = Q.get('end') === 'left' ? 'left' : 'right';
+
+// ---------- renderer ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = null;                                   // the sky scene is drawn first, the table scene over it
+const camera = new THREE.OrthographicCamera(0, 1, 0, -1, -200, 200);
+const composer = new EffectComposer(renderer);
+
+// ---------- sky: the whole sky around a virtual camera ----------
+// NASA's Gaia-based star map, drawn by a full-screen shader from a zoom pyramid of tiles. The camera turns with the
+// Earth–Moon axis, pans with Earth, narrows its view as the pieces close in, and zooms with the table. Idle: a slow drift.
+const SKY_TILT = -0.32;                                    // rad: galactic band vs the Earth–Moon axis
+const skyScene = new THREE.Scene();
+const skyCam = new THREE.PerspectiveCamera(55, 1, 1, 4000);
+// resolution: ?sky=4k|6k (default: 6k when the GPU allows; the ESO "large" file is 6000x3000, the biggest JPEG they publish)
+// sky imagery: NASA/GSFC SVS Deep Star Maps 2020 (Gaia DR2: ESA/Gaia/DPAC), galactic equirectangular, cut into a zoom
+// pyramid by tools/make_sky_tiles.py: base.jpg is the whole sky at 4096 px; L1..L3 are 2048 px tiles of the sky at 8k,
+// 16k and 32k. Like a map or a PDF, the page loads only the tiles on screen, at the sharpness the current zoom needs.
+const SKY_DIR = 'assets/sky/';
+const skyTex = new THREE.TextureLoader().load(SKY_DIR + 'base.jpg', t => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = renderer.capabilities.getMaxAnisotropy(); skyLumFrom(t.image); });
+// view-adaptive exposure for the brightest views only. The page ranks how bright the sky gets on screen: at load it
+// samples SKY_EXPO.n random views (direction, field of view, table zoom 0.25x-8x) through the same pixel -> sky
+// mapping as the shader and takes the SKY_EXPO.pct percentile of their mean luminance as the threshold. A frame whose
+// mean is above it gets one uniform exposure scale (stars keep their contrast against the band); all other frames,
+// i.e. all but the brightest ~8%, are drawn exactly as before. ?skypct=0.9 ?skyfloor=0.55 ?skyexpo=0 (off)
+const SKY_EXPO = { pct: +(Q.get('skypct') ?? .92), floor: +(Q.get('skyfloor') ?? .55), on: Q.get('skyexpo') !== '0', n: 600, target: null, e: 1, lum: null };
+function skyLumFrom(img) {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+  const g = c.getContext('2d'); g.drawImage(img, 0, 0, 256, 128);
+  const d = g.getImageData(0, 0, 256, 128).data, L = new Float32Array(256 * 128);
+  const lin = v => { v /= 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; };
+  for (let i = 0; i < L.length; i++) L[i] = .2126 * lin(d[4 * i]) + .7152 * lin(d[4 * i + 1]) + .0722 * lin(d[4 * i + 2]);
+  SKY_EXPO.lum = L;
+  skyCalibrate();
+}
+let SKY_META = { levels: 0, tile: 2048 };
+// every tile's compressed JPEG is held in memory (121 MB for the 32k pyramid), so showing one is only a fast off-thread
+// decode, never a network wait. Coarse levels load first.
+const tileBlobs = new Map();
+fetch(SKY_DIR + 'meta.json').then(r => r.json()).then(async m => {
+  SKY_META = m;
+  const keys = [];
+  for (let l = 1; l <= m.levels; l++) for (let r = 0; r < 2 ** l; r++) for (let c = 0; c < 2 ** (l + 1); c++) keys.push(`L${l}/${r}_${c}`);
+  let i = 0;
+  const worker = async () => { while (i < keys.length) { const k = keys[i++]; try { tileBlobs.set(k, await (await fetch(SKY_DIR + k + '.jpg')).blob()); } catch (e) {} } };
+  await Promise.all(Array.from({ length: 6 }, worker));
+}).catch(() => {});
+const SKY_SLOTS = 12;                                      // tiles drawn at once (coarser ones underneath during a fade)
+// colour grade: a per-channel lookup that matches the Gaia map's colour distribution to the ESO photo's (blue-violet,
+// higher contrast), made from the two base images; ?grade=0 shows the raw scientific colours, ?grade=0.5 half way
+const gradeTex = new THREE.TextureLoader().load(SKY_DIR + 'grade.png', t => { t.colorSpace = THREE.NoColorSpace; t.minFilter = t.magFilter = THREE.LinearFilter; t.generateMipmaps = false; });
+const SKY_GRADE_AMT = Q.has('grade') ? +Q.get('grade') : 0;   // the grade is baked into the tiles now (tools/make_sky_tiles.py); this adds on top
+const SKY_FOV = [44, 68], SKY_FOV0 = 55;                  // field-of-view range (deg); the low end bounds how far the photo is magnified
+const SKY_COOL = Q.has('cool') ? +Q.get('cool') : 0.7;   // cool split-tone on top of the tiles: warm dust -> violet, white balance -> teal-blue (0 = the tiles as baked)
+const SKY_GRADE = { black: +(Q.get('skyblack') ?? 0), gamma: +(Q.get('skygamma') ?? 1) };   // optional grade (the tiles are already tone-mapped)   // lift the photo's grey floor to ink, keep the band
+// The sky is drawn by a full-screen shader, not a sphere mesh, so it can zoom out past what any camera lens allows:
+// each pixel's angle from the view centre is multiplied by uZ (1 = normal; 3 = the sky looks 3x smaller), then the
+// panorama is sampled in that direction. Small angles scale uniformly, so a table zoom is a true zoom of the sky.
+const skyDome = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+  uniforms: { map: { value: skyTex }, uBlack: { value: SKY_GRADE.black }, uGamma: { value: SKY_GRADE.gamma },
+    uInvProj: { value: new THREE.Matrix4() }, uCamRot: { value: new THREE.Matrix3() }, uZ: { value: 1 }, uLut: { value: gradeTex }, uGradeAmt: { value: SKY_GRADE_AMT }, uCool: { value: SKY_COOL }, uExpo: { value: 1 },
+    ...Object.fromEntries(Array.from({ length: SKY_SLOTS }, (_, i) => [`uT${i}`, { value: skyTex }])),
+    uRect: { value: Array.from({ length: SKY_SLOTS }, () => new THREE.Vector4(2, 2, 2, 2)) }, uAlpha: { value: new Array(SKY_SLOTS).fill(0) } },
+  depthWrite: false, depthTest: false,
+  vertexShader: 'varying vec2 vNdc; void main(){ vNdc = position.xy; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: `uniform sampler2D map, uLut; uniform float uGradeAmt, uCool, uExpo; uniform float uBlack, uGamma, uZ; uniform mat4 uInvProj; uniform mat3 uCamRot; varying vec2 vNdc;
+    uniform vec4 uRect[${SKY_SLOTS}]; uniform float uAlpha[${SKY_SLOTS}]; ${Array.from({ length: SKY_SLOTS }, (_, i) => `uniform sampler2D uT${i};`).join(' ')}
+    const float PI = 3.14159265;
+    void main(){
+      vec4 p = uInvProj * vec4(vNdc, 1.0, 1.0); vec3 rc = normalize(p.xyz / p.w);         // pixel ray, camera space
+      float th = acos(clamp(-rc.z, -1.0, 1.0)), r2 = length(rc.xy);
+      vec2 ax = r2 > 1e-6 ? rc.xy / r2 : vec2(1.0, 0.0);
+      float t2 = min(th * uZ, PI);                                                       // zoomed-out angle from the view centre
+      vec3 d = uCamRot * vec3(ax * sin(t2), -cos(t2));                                    // world direction
+      float th0 = acos(clamp(d.y, -1.0, 1.0)), ph = atan(d.z, d.x);
+      float u1 = fract(ph / (2.0 * PI)), u2 = fract(ph / (2.0 * PI) + 0.5) - 0.5;
+      float u = fwidth(u1) <= fwidth(u2) + 1e-6 ? u1 : u2;                               // no mip seam at the wrap
+      float y = th0 / PI, x = fract(u);
+      vec3 c = texture2D(map, vec2(u, 1.0 - y)).rgb;
+      vec2 gx = dFdx(vec2(u, y)), gy = dFdy(vec2(u, y));                                 // seam-safe gradients for the tiles' mips
+      ${Array.from({ length: SKY_SLOTS }, (_, i) => `{ vec4 R = uRect[${i}]; vec2 sc = vec2(1.0 / (R.z - R.x), -1.0 / (R.w - R.y));
+        vec2 lc = vec2((x - R.x) * sc.x, 1.0 + (y - R.y) * sc.y);
+        if (x >= R.x && x < R.z && y >= R.y && y < R.w) c = mix(c, textureGrad(uT${i}, lc, gx * sc, gy * sc).rgb, uAlpha[${i}]); }`).join('\n      ')}
+      c *= uExpo;                                                                        // 1 except in the brightest views
+      vec3 cs = mix(12.92 * c, 1.055 * pow(max(c, 0.0), vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));   // the lookup works on sRGB values
+      vec3 g = vec3(texture2D(uLut, vec2(cs.r * 255.0 / 256.0 + 0.5 / 256.0, 0.5)).r,
+                    texture2D(uLut, vec2(cs.g * 255.0 / 256.0 + 0.5 / 256.0, 0.5)).g,
+                    texture2D(uLut, vec2(cs.b * 255.0 / 256.0 + 0.5 / 256.0, 0.5)).b);
+      cs = mix(cs, g, uGradeAmt);
+      { // cool split-tone (sRGB): keep each pixel's brightness, swing warm chroma toward violet, cool the white balance, lift cool saturation
+        float l = dot(cs, vec3(0.2126, 0.7152, 0.0722));
+        vec3 ch = cs - l; float warm = clamp((ch.r - ch.b) * 4.0, 0.0, 1.0);
+        vec3 vio = vec3(0.30, -0.22, 0.62) * length(ch) * 1.15;                         // violet chroma of the same strength
+        ch = mix(ch, vio, warm * 0.85);
+        ch *= 1.0 + 0.35 * clamp((ch.b - ch.r) * 4.0, 0.0, 1.0);                         // already-cool colours a bit richer
+        vec3 tint = mix(vec3(0.0, 0.035, 0.07), vec3(-0.03, 0.0, 0.05), smoothstep(0.05, 0.45, l));   // teal in the darks, blue-violet in the band
+        vec3 cc = l + ch + tint * smoothstep(0.0, 0.08, l);
+        cs = mix(cs, max(cc, 0.0), uCool);
+      }
+      c = mix(cs / 12.92, pow((cs + 0.055) / 1.055, vec3(2.4)), step(0.04045, cs));
+      c = pow(max(c - uBlack, 0.0) / (1.0 - uBlack), vec3(uGamma)); gl_FragColor = vec4(c, 1.0); }`,
+}));
+skyDome.frustumCulled = false; skyDome.renderOrder = -1;
+skyScene.add(skyDome);
+// (the procedural near-star layer was removed: the sky tiles carry the real stars)
+const SKY = { yaw: 0, pitch: 0, roll: SKY_TILT, fov: 55, x: 0, y: 0 };
+const clampN = (v, a, b) => Math.min(b, Math.max(a, v));
+// ---- sky tile manager: pick the level the zoom needs, find the tiles on screen, decode them (from memory) and cross-fade
+const tileCache = new Map();                                  // 'L/r_c' -> { tex, ready, used, alpha, level, rect }
+let tileClock = 0, tileLast = performance.now();
+function tileTex(key) {
+  let e = tileCache.get(key);
+  if (!e) {
+    const [lv, rc] = key.split('/'), l = +lv.slice(1), [r, c] = rc.split('_').map(Number), nC = 2 ** (l + 1), nR = 2 ** l;
+    e = { tex: null, ready: false, used: 0, alpha: 0, level: l, rect: [c / nC, r / nR, (c + 1) / nC, (r + 1) / nR] };
+    const done = t => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = renderer.capabilities.getMaxAnisotropy(); t.needsUpdate = true; e.tex = t; e.ready = true; };
+    const blob = tileBlobs.get(key);
+    if (blob && 'createImageBitmap' in window)
+      createImageBitmap(blob, { imageOrientation: 'flipY' }).then(bmp => { const t = new THREE.Texture(bmp); t.flipY = false; done(t); })
+        .catch(() => new THREE.TextureLoader().load(SKY_DIR + key + '.jpg', done));
+    else new THREE.TextureLoader().load(SKY_DIR + key + '.jpg', done);
+    tileCache.set(key, e);
+    if (tileCache.size > 56) {                                // GPU memory: forget the least recently used (not on screen)
+      const old = [...tileCache.entries()].filter(([, v]) => v.ready && v.alpha < .01).sort((a, b) => a[1].used - b[1].used).slice(0, tileCache.size - 48);
+      for (const [k, v] of old) { v.tex.dispose(); v.tex.image?.close?.(); tileCache.delete(k); }
+    }
+  }
+  e.used = ++tileClock; return e;
+}
+const _v = new THREE.Vector3(), _m3 = new THREE.Matrix3(), _d = new THREE.Vector3();
+function tilesAt(L, z) {                                      // tiles at level L under a 9 x 9 grid of screen rays
+  const set = new Set(), nC = 2 ** (L + 1), nR = 2 ** L;
+  _m3.setFromMatrix4(skyCam.matrixWorld);
+  for (let j = 0; j <= 8; j++) for (let i = 0; i <= 8; i++) {
+    _v.set(i / 4 - 1, j / 4 - 1, 1).applyMatrix4(skyCam.projectionMatrixInverse).normalize();
+    const th = Math.acos(Math.max(-1, Math.min(1, -_v.z))), r2 = Math.hypot(_v.x, _v.y), t2 = Math.min(th * z, Math.PI);
+    const ax = r2 > 1e-6 ? _v.x / r2 : 1, ay = r2 > 1e-6 ? _v.y / r2 : 0;
+    _d.set(ax * Math.sin(t2), ay * Math.sin(t2), -Math.cos(t2)).applyMatrix3(_m3);
+    const y = Math.acos(Math.max(-1, Math.min(1, _d.y))) / Math.PI, x = ((Math.atan2(_d.z, _d.x) / (2 * Math.PI)) % 1 + 1) % 1;
+    set.add(`L${L}/${Math.min(nR - 1, Math.floor(y * nR))}_${Math.min(nC - 1, Math.floor(x * nC))}`);
+  }
+  return set;
+}
+function skyTiles(z) {
+  const now = performance.now(), dt = Math.min(.1, (now - tileLast) / 1000); tileLast = now;
+  const su = skyDome.material.uniforms, Lmax = SKY_META.levels || 0;
+  const pxAng = skyCam.fov * Math.PI / 180 * z / (innerHeight * renderer.getPixelRatio());       // sky radians per device pixel
+  const lf = Math.log2(Math.PI / (2048 * pxAng));                                                 // continuous level the zoom needs
+  let L = Math.min(Lmax, Math.max(0, Math.ceil(lf))), want = L > 0 ? tilesAt(L, z) : new Set();
+  while (L > 0 && want.size > 8) { L--; want = L > 0 ? tilesAt(L, z) : new Set(); }
+  for (const k of want) tileTex(k);
+  // prepare the next level before the zoom gets there (decode only; not drawn yet)
+  if (L < Lmax && lf > L - .35) { const nx = tilesAt(L + 1, z); if (nx.size <= 8) for (const k of nx) tileTex(k); }
+  const wantReady = [...want].every(k => tileCache.get(k)?.ready);
+  // fade: wanted tiles in; others out, except coarser ones still covering for wanted tiles that are not decoded yet
+  const fadeK = 1 - Math.exp(-dt / .12);
+  for (const [k, e] of tileCache) {
+    if (!e.ready) continue;
+    const target = want.has(k) ? 1 : (e.level < L && !wantReady && e.alpha > 0) ? 1 : 0;
+    e.alpha += (target - e.alpha) * fadeK; if (e.alpha < .004 && !target) e.alpha = 0;
+  }
+  const shown = [...tileCache.values()].filter(e => e.ready && e.alpha > 0).sort((a, b) => a.level - b.level || b.alpha - a.alpha).slice(-SKY_SLOTS);
+  let k = 0;
+  for (const e of shown) { su[`uT${k}`].value = e.tex; su.uRect.value[k].set(...e.rect); su.uAlpha.value[k] = e.alpha; e.used = ++tileClock; k++; }   // coarse first, fine on top
+  for (; k < SKY_SLOTS; k++) { su.uRect.value[k].set(2, 2, 2, 2); su.uAlpha.value[k] = 0; }
+  SKY.level = L;
+  if (Q.has('skydbg') && (!SKY._dbg || now - SKY._dbg > 1500)) { SKY._dbg = now; console.log('SKYDBG', 'L', L, 'lf', lf.toFixed(2), 'want', want.size, 'shown', shown.length, 'cached', tileCache.size, 'blobs', tileBlobs.size, 'z', z.toFixed(3)); }
+}
+function updateSky(E, M, dt, now) {
+  const ex = E ? E.x : SW * .23, ey = E ? E.y : SH / 2;
+  const dx = (M ? M.x : ex + 750) - ex, dy = (M ? M.y : ey) - ey, ang = Math.atan2(-dy, dx);              // Earth→Moon direction on screen
+  const d = Math.max(300, Math.hypot(dx, dy));
+  const tYaw = (ex - SW / 2) / SW * 0.9 + now / 1000 * 0.0035;                                             // pan with Earth + ambient drift
+  const tPitch = -(ey - SH / 2) / SH * 0.55;
+  let tFov = clampN(SKY_FOV0 * 750 / d, SKY_FOV[0], SKY_FOV[1]);
+  const vz = (typeof modes !== 'undefined' && modes) ? modes.viewZoom : 1;                                 // table zoom (engagement lens): the sky scales with it
+  const tRoll = ang + SKY_TILT;                                        // band follows the axis; closer pieces = tighter sky
+  const a = 1 - Math.exp(-dt / .3);
+  SKY.yaw += (tYaw - SKY.yaw) * a; SKY.pitch += (tPitch - SKY.pitch) * a; SKY.fov += (tFov - SKY.fov) * a;
+  SKY.z = SKY.z ?? 1; SKY.z += (1 / Math.max(1e-3, vz) - SKY.z) * (1 - Math.exp(-dt / .08));                // table zoom-out factor (tracks the lens closely)
+  let dr = tRoll - SKY.roll; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); SKY.roll += dr * a;
+  SKY.x += ((ex - SW / 2) / SW * 90 - SKY.x) * a; SKY.y += (-(ey - SH / 2) / SH * 60 - SKY.y) * a;        // camera slides inside the star field
+  skyCam.rotation.set(SKY.pitch, SKY.yaw, SKY.roll, 'YXZ'); skyCam.position.set(SKY.x, SKY.y, 0);
+  if (Math.abs(skyCam.fov - SKY.fov) > .01) { skyCam.fov = SKY.fov; skyCam.updateProjectionMatrix(); }
+  skyCam.updateMatrixWorld();
+  const halfDiag = Math.atan(Math.tan(skyCam.fov * Math.PI / 360) * Math.hypot(1, skyCam.aspect));       // the whole sky fits at most once
+  const z = Math.min(SKY.z, .8 * Math.PI / halfDiag);                                                   // stop short of the whole sky (corners would pinch)
+  const su = skyDome.material.uniforms; su.uInvProj.value.copy(skyCam.projectionMatrixInverse); su.uCamRot.value.setFromMatrix4(skyCam.matrixWorld); su.uZ.value = z;
+  skyExposure(su, z, dt);
+  skyTiles(z);
+}
+const _sv = new THREE.Vector4(), _sd = new THREE.Vector3();
+// mean linear luminance of the view: the shader's pixel -> sky mapping on a 24 x 14 grid, looked up in the 256 x 128 copy
+function skyViewMean(invProj, camRot, z) {
+  const L = SKY_EXPO.lum; let sum = 0;
+  for (let j = 0; j < 14; j++) for (let i = 0; i < 24; i++) {
+    _sv.set((i + .5) / 24 * 2 - 1, (j + .5) / 14 * 2 - 1, 1, 1).applyMatrix4(invProj);
+    _sd.set(_sv.x / _sv.w, _sv.y / _sv.w, _sv.z / _sv.w).normalize();
+    const th = Math.acos(clampN(-_sd.z, -1, 1)), r2 = Math.hypot(_sd.x, _sd.y), ax = r2 > 1e-6 ? _sd.x / r2 : 1, ay = r2 > 1e-6 ? _sd.y / r2 : 0;
+    const t2 = Math.min(th * z, Math.PI);
+    _sd.set(ax * Math.sin(t2), ay * Math.sin(t2), -Math.cos(t2)).applyMatrix3(camRot);
+    const y = Math.acos(clampN(_sd.y, -1, 1)) / Math.PI, u = ((Math.atan2(_sd.z, _sd.x) / (2 * Math.PI)) % 1 + 1) % 1;
+    sum += L[Math.min(127, Math.floor(y * 128)) * 256 + Math.min(255, Math.floor(u * 256))];
+  }
+  return sum / 336;
+}
+function skyCalibrate() {                                  // threshold = SKY_EXPO.pct percentile over random views and zooms
+  const cam = new THREE.PerspectiveCamera(55, 16 / 9, .1, 10), rot = new THREE.Matrix3(), ms = [];
+  let seed = 12345; const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;   // fixed seed: same threshold every load
+  for (let k = 0; k < SKY_EXPO.n; k++) {
+    cam.fov = SKY_FOV[0] + rnd() * (SKY_FOV[1] - SKY_FOV[0]); cam.aspect = innerWidth / Math.max(1, innerHeight); cam.updateProjectionMatrix();
+    cam.rotation.set((2 * rnd() - 1) * .3, rnd() * 2 * Math.PI, SKY_TILT + (rnd() - .5) * 1.2, 'YXZ');   // live-like: updateSky keeps pitch within ±0.28 rad, roll near the band tilt cam.updateMatrixWorld(); rot.setFromMatrix4(cam.matrixWorld);
+    const halfDiag = Math.atan(Math.tan(cam.fov * Math.PI / 360) * Math.hypot(1, cam.aspect));
+    const z = Math.min(1 / (.25 * 32 ** rnd()), .8 * Math.PI / halfDiag);           // table zoom 0.25x .. 8x, log-uniform
+    ms.push(skyViewMean(cam.projectionMatrixInverse, rot, z));
+  }
+  ms.sort((a, b) => a - b);
+  SKY_EXPO.target = ms[Math.min(ms.length - 1, Math.floor(SKY_EXPO.pct * ms.length))];
+  if (Q.has('skydbg')) console.log('sky exposure threshold', SKY_EXPO.target, 'median view', ms[ms.length >> 1], 'max', ms[ms.length - 1]);
+}
+function skyExposure(su, z, dt) {
+  if (!SKY_EXPO.lum || SKY_EXPO.target == null || !SKY_EXPO.on) { su.uExpo.value = 1; return; }
+  const m = skyViewMean(su.uInvProj.value, su.uCamRot.value, z);
+  const e = m <= SKY_EXPO.target ? 1 : Math.max(SKY_EXPO.floor, Math.sqrt(SKY_EXPO.target / m));   // gentle: half-way (in log) back to the threshold
+  SKY_EXPO.e += (e - SKY_EXPO.e) * (1 - Math.exp(-dt / .5));
+  su.uExpo.value = SKY_EXPO.e;
+}
+composer.addPass(new RenderPass(skyScene, skyCam));
+const mainPass = new RenderPass(scene, camera); mainPass.clear = false; mainPass.clearDepth = true;
+composer.addPass(mainPass);
+const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), .45, .4, .7);   // not added: no glows
+composer.addPass(new OutputPass());
+
+// ---------- helpers ----------
+const lineMats = [];
+function line(points, color, width, opts = {}) {
+  const g = new LineGeometry(); g.setPositions(points.flatMap(p => [p.x, p.y, 0]));
+  const m = new LineMaterial({ color, linewidth: width, transparent: true, opacity: opts.opacity ?? 1, dashed: !!opts.dash, dashSize: opts.dash || 1, gapSize: opts.gap || 1, depthWrite: false });
+  lineMats.push(m);
+  const l = new Line2(g, m); l.computeLineDistances(); scene.add(l);
+  return l;
+}
+function setLine(l, points) { l.geometry.setPositions(points.flatMap(p => [p.x, p.y, 0])); l.computeLineDistances(); }
+const W = (x, y) => new THREE.Vector2(x, -y);     // screen mm -> world
+let S = 1;                                         // px per mm
+const toPx = (x, y) => [(x - SW / 2) * S + innerWidth / 2, (y - SH / 2) * S + innerHeight / 2];
+function label(html, color) { const d = document.createElement('div'); d.className = 'lbl'; d.innerHTML = html; d.style.color = color || 'var(--gg-fog-100)'; document.body.appendChild(d); return d; }
+function put(el, x, y) { const [px, py] = toPx(x, y); el.style.left = px + 'px'; el.style.top = py + 'px'; }
+
+// ---------- scene objects ----------
+const R_EARTH = EARTH_SPHERE_R;
+const names = {};
+for (const k of SATS) { const d = document.createElement('div'); d.className = 'mt mt-eyebrow'; d.textContent = ROLES[k].name; document.body.appendChild(d); names[k] = d; }
+const NAME_DY = { 'seldon-1': 44, 'seldon-2': 44 };
+
+// demo chip: a 56 mm stand-in for the printed mode chip (ArUco-like pattern)
+const CHIP_MM = 56;
+const chipMesh = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+  g.fillStyle = '#c8ccd4'; g.fillRect(0, 0, 128, 128);
+  g.fillStyle = '#000'; g.fillRect(16, 16, 96, 96);
+  const pat = ['10110', '01001', '11010', '00111', '10101'];
+  g.fillStyle = '#c8ccd4';
+  pat.forEach((row, j) => [...row].forEach((v, i) => { if (v === '1') g.fillRect(24 + i * 16, 24 + j * 16, 16, 16); }));
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.NearestFilter;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(CHIP_MM, CHIP_MM), new THREE.MeshBasicMaterial({ map: t, toneMapped: false }));
+  m.position.z = 1; scene.add(m); m.userData.tex = t; return m;
+})();
+// demo stand-in for the presenter's hand on the zoom slider (live: the camera model reports 'hand')
+const handMesh = new THREE.Mesh(new THREE.CircleGeometry(22, 48), new THREE.MeshBasicMaterial({ color: 0xd8c2a8, transparent: true, opacity: .55, toneMapped: false, depthWrite: false }));
+handMesh.visible = false; scene.add(handMesh);
+// stand-ins for the engagement console's slider codes (one printed code per parameter on the real table)
+const slMeshes = {};
+function slMesh(key) {
+  if (!slMeshes[key]) { const sz = key.endsWith(':sel') ? 20 : 30; const m = new THREE.Mesh(new THREE.PlaneGeometry(sz, sz), new THREE.MeshBasicMaterial({ map: chipMesh.userData.tex, toneMapped: false })); m.position.z = 1.5; scene.add(m); slMeshes[key] = m; }
+  return slMeshes[key];
+}
+
+// 33 mm hairline ring under Earth and Moon: the base footprint of the printed piece
+const baseRings = {};
+for (const k of ['earth', 'moon']) {
+  const pts = []; for (let i = 0; i <= 96; i++) { const a = i / 96 * Math.PI * 2; pts.push(new THREE.Vector2(33 * Math.cos(a), 33 * Math.sin(a))); }
+  baseRings[k] = line(pts, 0x8a969a, 1.1, { opacity: .3 });
+}
+
+// ---------- input: feed or demo ----------
+const pieces = {}, smooth = {};
+let feed = null, feedAt = -1e9;
+try { new EventSource('/events').onmessage = e => { try { feed = JSON.parse(e.data); feedAt = performance.now(); } catch {} }; } catch {}   // live.py's detector feed (absent on a plain file server: stays in demo mode)
+const online = () => performance.now() - feedAt < 1500;
+for (const [k, [x, y]] of Object.entries(DEMO)) pieces[k] = { x_mm: x, y_mm: y, seen_ago: 0 };
+{ // test hooks: ?mode=engage|dvmap  ?s1=700,300  ?s2=..  ?chip=2 (box index, after createModes) ?nomoon ?noearth ?end=left
+  for (const [q, k] of [['s1', 'seldon-1'], ['s2', 'seldon-2'], ['earth', 'earth'], ['moon', 'moon']]) if (Q.get(q)) { const [x, y] = Q.get(q).split(',').map(Number); Object.assign(pieces[k], { x_mm: x, y_mm: y }); }
+  if (Q.has('nomoon')) delete pieces.moon;
+}
+
+let drag = null;
+if (Q.get('chipout')) setTimeout(() => { if (pieces.chip) { pieces.chip.x_mm -= 200; } }, +Q.get('chipout'));   // test hook: pull the chip out of the box after N ms
+
+const fromPx = (px, py) => [(px - innerWidth / 2) / S + SW / 2, (py - innerHeight / 2) / S + SH / 2];
+addEventListener('pointerdown', e => {
+  if (calibrating) return;
+  const [x, y] = fromPx(e.clientX, e.clientY);
+  let best = null, bd = 70;
+  for (const [k, p] of Object.entries(smooth)) { const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = k; } }
+  drag = best;
+});
+addEventListener('pointermove', e => { if (drag) { const [x, y] = fromPx(e.clientX, e.clientY); Object.assign(pieces[drag], { x_mm: x, y_mm: y }); } });
+addEventListener('pointerup', () => drag = null);
+
+// ---------- calibration: ArUco markers drawn on the screen ----------
+let calibrating = false;
+const markers = () => {
+  const s = 80, m = 75;
+  return [[0, m, m], [1, SW - m, m], [2, SW - m, SH - m], [3, m, SH - m], [4, SW / 2, SH / 2]].map(([id, x, y]) => ({ id, x_mm: x, y_mm: y, size_mm: s }));
+};
+const cal = document.getElementById('cal'), calmsg = document.getElementById('calmsg');
+function drawMarkers() {
+  cal.querySelectorAll('img').forEach(i => i.remove());
+  for (const mk of markers()) {
+    const img = new Image(); img.src = `/marker/${mk.id}.png`;
+    const side = mk.size_mm * S, pad = mk.size_mm * .25 * S;   // PNG is the black square only; white quiet zone = padding
+    const [px, py] = toPx(mk.x_mm, mk.y_mm);
+    Object.assign(img.style, { width: side + 'px', height: side + 'px', padding: pad + 'px', left: (px - side / 2 - pad) + 'px', top: (py - side / 2 - pad) + 'px' });
+    cal.appendChild(img);
+  }
+}
+async function calibrate() {
+  if (calibrating) return;
+  calibrating = true; cal.style.display = 'block'; drawMarkers();
+  calmsg.textContent = 'CALIBRATING';
+  await new Promise(r => setTimeout(r, 900));
+  try {
+    const res = await (await fetch('/calibrate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ markers: markers() }) })).json();
+    calmsg.textContent = res.ok ? `CALIBRATED · ${res.markers_found} MARKERS · ${res.rms_mm.toFixed(1)} MM` : 'FAILED · ' + (res.error || '').toUpperCase();
+  } catch { calmsg.textContent = 'FAILED · NO DETECTOR'; }
+  await new Promise(r => setTimeout(r, 1800));
+  cal.style.display = 'none'; calibrating = false;
+}
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (k === 'c') calibrate();
+  if (k === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+});
+
+// ---------- procedural Earth ----------
+function hash(x, y, z, s) {
+  let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(z, 1274126177) + Math.imul(s, 2246822519)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function noise(x, y, z, s) {
+  const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+  const f = t => t * t * (3 - 2 * t), u = f(x - xi), v = f(y - yi), w = f(z - zi);
+  const L = (a, b, t) => a + (b - a) * t;
+  const c = (dx, dy, dz) => hash(xi + dx, yi + dy, zi + dz, s);
+  return L(L(L(c(0,0,0), c(1,0,0), u), L(c(0,1,0), c(1,1,0), u), v), L(L(c(0,0,1), c(1,0,1), u), L(c(0,1,1), c(1,1,1), u), v), w);
+}
+function fbm(x, y, z, s, oct = 5) {
+  let a = .5, f = 1, sum = 0, norm = 0;
+  for (let i = 0; i < oct; i++) { sum += a * noise(x * f, y * f, z * f, s + i); norm += a; a *= .5; f *= 2.03; }
+  return sum / norm;
+}
+function sphereTexture(W, H, paint) {
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(W, H);
+  for (let j = 0; j < H; j++) {
+    const lat = (.5 - (j + .5) / H) * Math.PI, cl = Math.cos(lat), y = Math.sin(lat);
+    for (let i = 0; i < W; i++) {
+      const lon = (i + .5) / W * Math.PI * 2;
+      const [r, g, b, a] = paint(Math.cos(lon) * cl, y, Math.sin(lon) * cl, lat);
+      const k = (j * W + i) * 4; img.data[k] = r; img.data[k + 1] = g; img.data[k + 2] = b; img.data[k + 3] = a;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  return t;
+}
+const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * Math.max(0, Math.min(1, t)));
+const earthMap = sphereTexture(1024, 512, (x, y, z, lat) => {
+  const s = 1.7, n = fbm(x * s + 3, y * s, z * s, 1), d = fbm(x * 6, y * 6, z * 6, 9, 3);
+  const polar = Math.abs(lat) / (Math.PI / 2) + (d - .5) * .25;
+  if (polar > .82) return [235, 242, 250, 255];
+  if (n < .5) return [...mix([6, 26, 66], [22, 84, 140], (n - .3) / .2), 255];
+  const dry = 1 - Math.abs(lat) / .6 + (d - .5) * .8;
+  let c = mix([42, 92, 40], [122, 108, 62], (n - .5) / .18);
+  c = mix(c, [176, 150, 98], dry * .7);
+  if (polar > .7) c = mix(c, [220, 228, 236], (polar - .7) / .12);
+  return [...c, 255];
+});
+const cloudMap = sphereTexture(512, 256, (x, y, z) => {
+  const n = fbm(x * 2.6 + 11, y * 3.2, z * 2.6, 21);
+  const a = Math.max(0, Math.min(1, (n - .52) / .2));
+  return [255, 255, 255, a * 210];
+});
+
+// ---------- stand-in models (what the 3D prints will be), true print size ----------
+scene.add(new THREE.AmbientLight(0x56607a, .9));
+const sun = new THREE.DirectionalLight(0xf2f0ea, 1.5); sun.position.set(-1, .4, 1.2); scene.add(sun);
+const models = {};
+{
+  const tiltE = new THREE.Group(), earthM = new THREE.Mesh(new THREE.SphereGeometry(EARTH_SPHERE_R, 64, 48),
+    new THREE.MeshStandardMaterial({ map: earthMap, roughness: 1, metalness: 0, transparent: true, opacity: .8 }));
+  const cloudM = new THREE.Mesh(new THREE.SphereGeometry(EARTH_SPHERE_R * 1.015, 64, 48), new THREE.MeshStandardMaterial({ map: cloudMap, transparent: true, depthWrite: false }));
+  tiltE.add(earthM, cloudM); tiltE.rotation.x = -Math.PI / 2 + THREE.MathUtils.degToRad(23.4);   // pole toward the viewer, tilted 23.4°
+  const e = new THREE.Group(); e.add(tiltE); e.userData.spin = earthM; e.userData.clouds = cloudM; models.earth = e;
+  const moonMap = sphereTexture(256, 128, (x, y, z) => { const n = fbm(x * 3, y * 3, z * 3, 40); const g = 110 + n * 120; return [g, g, g * .98, 255]; });
+  const m = new THREE.Group(); m.add(new THREE.Mesh(new THREE.SphereGeometry(MOON_SPHERE_R, 48, 32), new THREE.MeshStandardMaterial({ map: moonMap, roughness: 1, transparent: true, opacity: .8 }))); models.moon = m;
+  const foil = new THREE.MeshStandardMaterial({ color: 0xd6a84a, metalness: .7, roughness: .35 });
+  const panel = new THREE.MeshStandardMaterial({ color: 0x23397a, metalness: .3, roughness: .35, emissive: 0x0a1433 });
+  const white = new THREE.MeshStandardMaterial({ color: 0xdfe3ea, metalness: .2, roughness: .5 });
+  const box = (w, h, d, mat, x = 0, y = 0, z = 0) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); b.position.set(x, y, z); return b; };
+  // flat top-down silhouettes: slate fill, thin grey outline, accent dot in the graphic colour
+  const flat = (w, h, x, y) => {
+    const gr = new THREE.Group(), geo = new THREE.PlaneGeometry(w, h);
+    const f = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x12171a, transparent: true, opacity: .7, toneMapped: false }));
+    const o = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: 0x8a969a, toneMapped: false }));
+    o.position.z = .2; gr.add(f, o); gr.position.set(x, y, 0); return gr;
+  };
+  for (const id of ['seldon-1', 'seldon-2']) {           // 100 mm span at 1.0 scale, 23 mm bus
+    const g = new THREE.Group();
+    g.add(flat(23, 23, 0, 0));
+    for (const sd of [-1, 1]) { g.add(flat(36, 18, sd * 31, 0)); g.add(flat(4, 2, sd * 12.5, 0)); }
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(3.4, 24), new THREE.MeshBasicMaterial({ color: ROLES[id].hex, toneMapped: false })); dot.position.z = .4; g.add(dot);
+    g.scale.setScalar(SELDON_SCALE); models[id] = g;
+  }
+  { // ISS: ~120 mm truss, 4 array wings, pressurised modules across the middle
+    const g = new THREE.Group();
+    g.add(box(120, 3, 3, white));
+    for (const x of [-48, -34, 34, 48]) for (const sd of [-1, 1]) g.add(box(9, 30, 1, panel, x, sd * 18, 0));
+    g.add(box(6, 46, 6, white, 0, 0, 2)); g.add(box(16, 5, 5, white, 0, -6, 2));
+    models.iss = g;
+  }
+  if (!SATS.includes('iss')) delete models.iss;
+  for (const [k, g] of Object.entries(models)) { g.position.z = 2; scene.add(g); g.userData.rot = k === 'iss' ? .4 : k.startsWith('seldon') ? -.3 : 0; }
+}
+addEventListener('wheel', e => {
+  const [x, y] = fromPx(e.clientX, e.clientY);
+  let best = null, bd = 70;
+  for (const [k, p] of Object.entries(smooth)) { const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = k; } }
+  if (best && models[best]) models[best].userData.rot += e.deltaY * .003;
+}, { passive: true });
+
+// ---------- layout ----------
+let modes = null;
+function layout() {
+  const iw = innerWidth, ih = innerHeight;
+  renderer.setSize(iw, ih); composer.setSize(iw, ih); bloom.setSize(iw, ih);
+  for (const m of lineMats) m.resolution.set(iw, ih);
+  S = Math.min(iw / SW, ih / SH);
+  camera.left = SW / 2 - iw / (2 * S); camera.right = SW / 2 + iw / (2 * S);
+  camera.top = -SH / 2 + ih / (2 * S); camera.bottom = -SH / 2 - ih / (2 * S);
+  camera.updateProjectionMatrix();
+  skyCam.aspect = iw / ih; skyCam.updateProjectionMatrix();   // the dome always fills the window, any aspect, fullscreen included
+  const fs = Math.max(10, 4.5 * S) + 'px';
+  document.querySelectorAll('.lbl:not([data-pn])').forEach(l => l.style.fontSize = fs);
+  if (calibrating) drawMarkers();
+  modes?.onLayout();
+  placeNote();
+}
+addEventListener('resize', layout);
+const noteEl = document.getElementById('note');
+const TEXT = Q.get('text') === 'all' ? 'all' : 'corners';   // corners-only text for now (?text=all restores names, captions, labels)
+function placeNote() {                       // demo caption: presenter's opposite short end, 12 mm further inward than the mode caption
+  const x = END === 'right' ? MARG + 4 + 12 : SW - MARG - 4 - 12;
+  put(noteEl, x, SH / 2);
+  noteEl.style.transform = `translate(-50%,-50%) rotate(${END === 'right' ? 90 : -90}deg)`;
+  noteEl.style.display = TEXT === 'all' ? '' : 'none';
+}
+layout();
+modes = createModes({
+  THREE, scene, line, put,
+  getScale: () => S, get SW() { return SW; }, get SH() { return SH; },
+  end: Q.get('end'), text: Q.get('text'),
+  initialMode: Q.get('mode') || undefined, missionUrl: Q.get('mission') || undefined,
+  engageUrl: Q.get('engage') || undefined, engageScenario: Q.get('scenario') || undefined, engageScale: Q.get('kmpermm') ? +Q.get('kmpermm') : undefined, engageStart: Q.get('engt') || undefined,
+});
+{ const b = modes.boxRect(Q.get('chip') != null ? +Q.get('chip') : 0); pieces.chip = { x_mm: b.cx, y_mm: b.cy, seen_ago: 0 }; }
+// engagement mode: Earth sits at the table centre and the Moon is set aside (demo stand-ins; on the real table, move the pieces).
+// Both engagement and orbits put the demo hand on the zoom slider and take the chip away (no delta-v map).
+let parked = null; const slParked = {};
+function engagePieces() {
+  const eng = modes.mode === 'engage', orb = modes.mode === 'orbits';
+  if (parked) {   // undo the previous mode's stand-ins (Earth / Moon only if that mode moved them)
+    if (parked.earth) pieces.earth = parked.earth; if (parked.moon) pieces.moon = parked.moon; if (parked.chip) pieces.chip = parked.chip; parked = null;
+    if (pieces.hand) { slParked.hand = pieces.hand; delete pieces.hand; }
+  }
+  if (!eng && !orb) return;
+  parked = { earth: pieces.earth && { ...pieces.earth }, moon: pieces.moon && { ...pieces.moon }, chip: pieces.chip && { ...pieces.chip } };
+  delete pieces.chip;
+  if (eng) {
+    pieces.earth = { x_mm: SW / 2, y_mm: SH / 2, seen_ago: 0 }; delete pieces.moon;
+    const h = modes.zoomHandPos(); pieces.hand = { x_mm: h.x, y_mm: h.y, seen_ago: 0 };   // demo hand, resting on the zoom slider at the current zoom
+  } else if (!online()) Object.assign(pieces, modes.orbitsDemo(pieces));   // demo stand-ins: Seldons in LEO and in lunar orbit (true scale: Earth and Moon 970 mm apart)
+}
+engagePieces();
+// test hook: ?sl=o:thrust:0.3,a:fuel:20 puts those slider codes at those values
+if (Q.get('sl')) for (const it of Q.get('sl').split(',')) { const [sd, id, v] = it.split(':'); modes.engSet(sd, id, v); }   // ?sl=o:thrust:0.3,s:zoom:400
+layout();
+if (Q.get('autostart')) setTimeout(() => fetch(`http://${location.hostname || 'localhost'}:8791/control`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"start":true}' }).catch(() => {}), +Q.get('autostart'));   // test hook: press Start after N ms
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (k === 'm') { modes.setMode(modes.mode === 'engage' ? 'orbits' : 'engage'); engagePieces(); }   // orbits (kiosk) <-> real engagement sim
+  if (k === 't') modes.setTopo(!modes.topo);
+  if (e.key === 'Enter' && modes.mode === 'engage') fetch(`http://${location.hostname || 'localhost'}:8791/control`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"start":true}' }).catch(() => {});   // same as the laptop's Start                  // topography on/off (the chip does this on the table)
+  if (k === '[' || k === ']') { const b = Math.max(0, Math.min(modes.DV_MAX, modes.budget + (k === ']' ? .5 : -.5))); modes.setBudget(b); if (pieces.chip) pieces.chip.y_mm = modes.trackY(b); }   // budget ±0.5 km/s (the chip follows)
+});
+
+// ---------- frame ----------
+let last = performance.now();
+function tick(now) {
+  const dt = Math.min(.05, Math.max(0, (now - last) / 1000)); last = now;
+  const live = online();
+  if (live && feed) {
+    if (feed.screen_mm && (feed.screen_mm[0] !== SW || feed.screen_mm[1] !== SH)) { [SW, SH] = feed.screen_mm; layout(); }
+    for (const k of Object.keys(ROLES)) { const p = feed.pieces?.[k]; if (p) pieces[k] = p; else delete pieces[k]; }
+    if (feed.chip) pieces.chip = feed.chip;
+    if (feed.hand) pieces.hand = feed.hand; else if (feed.pieces) delete pieces.hand;   // camera: hand position over the zoom slider
+  }
+  document.getElementById('feed').style.background = live ? '#dde3e4' : '#5c6b70';
+  { const t = !live ? 'DEMO · DRAG PIECES · SCROLL TO ROTATE' : feed.calibrated ? '' : 'UNCALIBRATED · PRESS C'; if (noteEl.textContent !== t) noteEl.textContent = t; }
+  const a = 1 - Math.exp(-dt / .09);
+  for (const [k, p] of Object.entries(pieces)) {
+    if (!smooth[k]) smooth[k] = { x: p.x_mm, y: p.y_mm }; else { smooth[k].x += (p.x_mm - smooth[k].x) * a; smooth[k].y += (p.y_mm - smooth[k].y) * a; }
+  }
+  for (const k of Object.keys(smooth)) if (!pieces[k]) delete smooth[k];
+  const held = k => pieces[k] && pieces[k].seen_ago > .6;
+  const pulse = .5 + .5 * Math.sin(now / 700);
+
+  for (const k of Object.keys(names)) {
+    const P = smooth[k], el = names[k];
+    el.style.display = P && TEXT === 'all' ? '' : 'none';
+    if (P) { put(el, P.x, P.y + NAME_DY[k]); el.style.transform = `translate(-50%,-50%) rotate(${P.y < SH / 2 ? 180 : 0}deg)`; el.style.opacity = held(k) ? .35 : .8; }
+  }
+  { const P = smooth.chip; chipMesh.visible = !!P; if (P) chipMesh.position.set(P.x, -P.y, 1); }
+  for (const [k, m] of Object.entries(slMeshes)) m.visible = !!smooth[k];
+  handMesh.visible = !!smooth.hand && !online(); if (smooth.hand) handMesh.position.set(smooth.hand.x, -smooth.hand.y, 1.6);   // demo stand-in only
+  for (const [k, P] of Object.entries(smooth)) if (k.startsWith('sl:')) slMesh(k).position.set(P.x, -P.y, 1.5);
+  const view = {};
+  for (const [k, P] of Object.entries(smooth)) view[k] = { x_mm: P.x, y_mm: P.y };
+  modes.update(view, dt, now);
+  updateSky(smooth.earth, smooth.moon, dt, now);
+
+  // orbits view: figures bigger than scale (sizes from orbits-geo.js FIG; the lowest orbits hug their edges), Seldons smaller than the old 150 mm, no base rings
+  const fig = modes.mode === 'orbits' && modes.orbitsFigures();
+  models.earth.scale.setScalar(fig ? fig.earth / EARTH_SPHERE_R : 1); models.moon.scale.setScalar(fig ? fig.moon / MOON_SPHERE_R : 1);
+  for (const id of SATS) if (models[id]) models[id].scale.setScalar(fig ? ORB_SELDON_SCALE : SELDON_SCALE);
+  for (const [k, r] of Object.entries(baseRings)) { const P = smooth[k]; r.visible = !!P && !fig; if (P) r.position.set(P.x, -P.y, 0); }
+  for (const [k, g] of Object.entries(models)) {
+    const P = smooth[k]; g.visible = !!P; if (!P) continue;
+    g.position.x = P.x; g.position.y = -P.y; g.rotation.z = g.userData.rot;
+  }
+  models.earth.userData.spin.rotation.y += dt * .08; models.earth.userData.clouds.rotation.y += dt * .1;
+
+  composer.render();
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

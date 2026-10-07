@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Piece Wraps</title>
+<style>
+  :root { --bg: #f3f4f6; --fg: #1f2430; --dim: #6b7280; --line: #d6d9df; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.45 -apple-system, system-ui, sans-serif; }
+  #controls { max-width: 900px; margin: 0 auto; padding: 18px 16px 8px; }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  p { margin: 4px 0; color: var(--dim); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px 14px; margin: 12px 0; }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+  input, select { width: 70px; font: inherit; padding: 2px 4px; border: 1px solid var(--line); border-radius: 4px; text-align: right; }
+  select { width: auto; text-align: left; }
+  button { font: inherit; padding: 7px 16px; border-radius: 6px; border: 0; background: #1f2430; color: #fff; cursor: pointer; }
+  .sheet { background: #fff; margin: 16px auto; box-shadow: 0 1px 6px rgba(0,0,0,.15); }
+  .sheet svg { display: block; }
+  @media print {
+    @page { margin: 0; }
+    body { background: #fff; }
+    #controls { display: none; }
+    .sheet { margin: 0; box-shadow: none; page-break-after: always; break-after: page; }
+  }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+</head>
+<body>
+<div id="controls">
+  <h1>Piece wraps — printable stickers</h1>
+  <p>Sizes are filled in from the build plan, your base measurements and the Seldon model. Print at <b>100% / Actual size</b> (no "fit to page") on <b>matte</b> paper. Check the 100 mm ruler on the printout before cutting.</p>
+  <p>Spheres: use plain paper + glue stick (sticker paper wrinkles on curves). Flat parts (wings, body tops, bases): sticker paper.</p>
+  <div class="grid" id="fields"></div>
+  <button onclick="print()">Print</button>
+</div>
+<div id="sheets"></div>
+
+<script>
+// All sizes in mm.
+// Spheres + pegs: the planned build (Earth Ø42.5 / Moon Ø11.6 true scale at 1 mm = 300 km; pegs Ø5.0, Moon Ø2.5).
+// Bases: measured (Earth 42, Moon 24.5, Seldon 44).
+// Seldon: from the Seldon source model (Seldon Render.stl, 8182 mm span) scaled to 100 mm wingtip-to-wingtip:
+//   each wing 36.7 × 12.9 mm in 3 panels, body top 12.9 × 23.5 mm.
+const P = {
+  paper: 'letter',
+  earthStyle: 'cap', capTo: -20,                 // cap = top-down petal cap like the Moon's, reaching down to latitude capTo
+  earthD: 42.5, gores: 12, poleGap: 20,          // strips: poleGap = degrees left bare around the south pole for the post
+  moonD: 11.6,
+  earthBase: 42, moonBase: 24.5, seldonBase: 44,
+  earthHole: 6, moonHole: 3.5, seldonHole: 6,    // post + clearance; each ring also has a slit to slip on
+  wingL: 36.7, wingW: 12.9, panels: 3, busW: 12.9, busL: 23.5,
+};
+const FIELDS = [
+  ['paper', 'Paper', ['letter', 'a4']],
+  ['earthStyle', 'Earth wrap', ['cap', 'strips']], ['capTo', 'Cap reaches lat (°)'],
+  ['earthD', 'Earth sphere Ø'], ['gores', 'Earth strips'], ['poleGap', 'Bare south cap (°)'],
+  ['moonD', 'Moon sphere Ø'],
+  ['earthBase', 'Earth base Ø'], ['moonBase', 'Moon base Ø'], ['seldonBase', 'Seldon base Ø'],
+  ['earthHole', 'Earth post hole Ø'], ['moonHole', 'Moon post hole Ø'], ['seldonHole', 'Seldon post hole Ø'],
+  ['wingL', 'Seldon wing length'], ['wingW', 'Seldon wing width'], ['panels', 'Panels per wing'],
+  ['busW', 'Seldon body top W'], ['busL', 'Seldon body top L'],
+];
+const COL = { ocean: '#2f95dc', land: '#46b45a', ice: '#ffffff', moon: '#d9dce2', crater: '#b9bdc6',
+              earthBase: '#2fc6f2', moonBase: '#ffffff', s1: '#ffd21f', s2: '#ff2fa6', cut: '#9aa0aa' };
+const PAPER = { letter: [215.9, 279.4], a4: [210, 297] };
+
+// ---------- controls ----------
+const fields = document.getElementById('fields');
+for (const [k, name, opts] of FIELDS) {
+  const l = document.createElement('label'); l.textContent = name;
+  const el = opts ? document.createElement('select') : document.createElement('input');
+  if (opts) for (const o of opts) el.add(new Option(o.toUpperCase(), o));
+  else { el.type = 'number'; el.step = k === 'gores' ? '1' : '0.1'; }
+  el.value = P[k];
+  el.oninput = () => { P[k] = opts ? el.value : (isNaN(parseFloat(el.value)) ? P[k] : parseFloat(el.value)); render(); };
+  l.appendChild(el); fields.appendChild(l);
+}
+
+// ---------- Earth texture (equirectangular) from Natural Earth land outlines ----------
+let world = null;
+async function earthTexture() {
+  const W = 2048, H = 1024, c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = COL.ocean; g.fillRect(0, 0, W, H);
+  try {
+    world = world || await (await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json')).json();
+    const land = topojson.feature(world, world.objects.land);
+    g.fillStyle = COL.land;
+    const X = lon => (lon + 180) / 360 * W, Y = lat => (90 - lat) / 180 * H;
+    for (const f of land.features) {
+      const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
+      for (const poly of polys) {
+        g.beginPath();
+        for (const ring of poly) ring.forEach(([lo, la], i) => i ? g.lineTo(X(lo), Y(la)) : g.moveTo(X(lo), Y(la)));
+        g.fill('evenodd');
+      }
+    }
+  } catch (e) { console.warn('no land data (offline?) — plain ocean globe', e); }
+  g.fillStyle = COL.ice;                                    // ice caps
+  g.fillRect(0, 0, W, H * 12 / 180); g.fillRect(0, H * (180 - 25) / 180, W, H * 25 / 180);
+  return g.getImageData(0, 0, W, H);
+}
+
+// Gores: N interrupted sinusoidal strips, north pole at top, joined at the equator.
+function goresImage(tex, R, N, poleGap, ppm = 12) {
+  const dLon = 2 * Math.PI / N, gw = R * dLon, gh = Math.PI * R;
+  const W = Math.ceil(N * gw * ppm), H = Math.ceil(gh * ppm);
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d'), out = g.createImageData(W, H);
+  const minLat = -Math.PI / 2 + poleGap * Math.PI / 180;
+  for (let py = 0; py < H; py++) {
+    const lat = Math.PI / 2 - (py + .5) / ppm / R;
+    if (lat < minLat) continue;
+    const half = gw / 2 * Math.cos(lat);
+    const ty = Math.min(tex.height - 1, Math.floor((Math.PI / 2 - lat) / Math.PI * tex.height));
+    for (let px = 0; px < W; px++) {
+      const xmm = (px + .5) / ppm, k = Math.floor(xmm / gw), dx = xmm - (k + .5) * gw;
+      if (Math.abs(dx) > half) continue;
+      const lon = -Math.PI + (k + .5) * dLon + dx / (R * Math.max(1e-6, Math.cos(lat)));
+      const tx = Math.floor(((lon + Math.PI) / (2 * Math.PI) % 1 + 1) % 1 * tex.width);
+      const s = (ty * tex.width + tx) * 4, d = (py * W + px) * 4;
+      out.data[d] = tex.data[s]; out.data[d + 1] = tex.data[s + 1]; out.data[d + 2] = tex.data[s + 2]; out.data[d + 3] = 255;
+    }
+  }
+  g.putImageData(out, 0, 0);
+  return { url: c.toDataURL('image/png'), w: N * gw, h: gh, gw, minLat };
+}
+
+// ---------- SVG helpers (units = mm) ----------
+const svgEl = (w, h) => `<svg xmlns="http://www.w3.org/2000/svg" width="${w}mm" height="${h}mm" viewBox="0 0 ${w} ${h}">`;
+const txt = (x, y, s, size = 3, fill = '#555', anchor = 'start') => `<text x="${x}" y="${y}" font-size="${size}" fill="${fill}" text-anchor="${anchor}" font-family="Helvetica, Arial">${s}</text>`;
+const ruler = (x, y) => {
+  let s = `<line x1="${x}" y1="${y}" x2="${x + 100}" y2="${y}" stroke="#000" stroke-width=".3"/>`;
+  for (let i = 0; i <= 100; i += 5) s += `<line x1="${x + i}" y1="${y}" x2="${x + i}" y2="${y - (i % 10 ? 1.5 : 3)}" stroke="#000" stroke-width=".25"/>`;
+  return s + txt(x + 102, y, '100 mm — measure me before cutting', 2.8, '#000');
+};
+const ring = (cx, cy, D, hole, fill, label) =>
+  `<line x1="${cx}" y1="${cy - hole / 2}" x2="${cx}" y2="${cy - D / 2}" stroke="${COL.cut}" stroke-width=".3" stroke-dasharray="1 .6"/>` +   // slit
+  `<path d="M${cx - D / 2},${cy} a${D / 2},${D / 2} 0 1,0 ${D},0 a${D / 2},${D / 2} 0 1,0 ${-D},0 M${cx - hole / 2},${cy} a${hole / 2},${hole / 2} 0 1,1 ${hole},0 a${hole / 2},${hole / 2} 0 1,1 ${-hole},0" fill="${fill}" fill-rule="evenodd" stroke="${COL.cut}" stroke-width=".25"/>` +
+  txt(cx, cy + D / 2 + 4, label, 2.6, '#555', 'middle');
+// Earth cap: north-polar azimuthal equidistant map (distance from the centre = arc length from the
+// north pole), down to latitude capTo, with 12 slits so it folds over the sphere like the Moon cap.
+function earthCapImage(tex, R, capTo, ppm = 12) {
+  const rMax = R * (90 - capTo) * Math.PI / 180, N = Math.ceil(2 * rMax * ppm);
+  const c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d'), out = g.createImageData(N, N);
+  for (let py = 0; py < N; py++) for (let px = 0; px < N; px++) {
+    const dx = (px + .5) / ppm - rMax, dy = (py + .5) / ppm - rMax, d = Math.hypot(dx, dy);
+    if (d > rMax) continue;
+    const lat = Math.PI / 2 - d / R, lon = Math.atan2(-dx, -dy);         // Greenwich up, east counter-clockwise (seen from above the pole)
+    const tx = Math.floor(((lon + Math.PI) / (2 * Math.PI) % 1 + 1) % 1 * tex.width);
+    const ty = Math.min(tex.height - 1, Math.floor((Math.PI / 2 - lat) / Math.PI * tex.height));
+    const s = (ty * tex.width + tx) * 4, o = (py * N + px) * 4;
+    out.data[o] = tex.data[s]; out.data[o + 1] = tex.data[s + 1]; out.data[o + 2] = tex.data[s + 2]; out.data[o + 3] = 255;
+  }
+  g.putImageData(out, 0, 0);
+  return { url: c.toDataURL('image/png'), r: rMax };
+}
+function earthCap(cx, cy, img, R) {
+  const r = img.r, slit = R * 40 * Math.PI / 180;                       // slits from 40° off the pole to the rim
+  let s = `<image href="${img.url}" x="${cx - r}" y="${cy - r}" width="${2 * r}" height="${2 * r}"/>` +
+          `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${COL.cut}" stroke-width=".25"/>`;
+  for (let i = 0; i < 12; i++) {
+    const a = i / 12 * 2 * Math.PI;
+    s += `<line x1="${cx + Math.cos(a) * slit}" y1="${cy + Math.sin(a) * slit}" x2="${cx + Math.cos(a) * r}" y2="${cy + Math.sin(a) * r}" stroke="#fff" stroke-width=".35"/>`;
+  }
+  return s;
+}
+function moonCap(cx, cy, Rm) {
+  // top hemisphere, azimuthal equidistant: radius = Rm·π/2; 8 slits from the rim so it folds over the sphere
+  const r = Rm * Math.PI / 2, slit = r * .55;
+  let s = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${COL.moon}" stroke="${COL.cut}" stroke-width=".2"/>`;
+  for (const [dx, dy, cr] of [[-.3, -.2, .18], [.25, .1, .13], [-.05, .35, .1], [.35, -.35, .08], [-.4, .3, .07]])
+    s += `<circle cx="${cx + dx * r}" cy="${cy + dy * r}" r="${cr * r}" fill="${COL.crater}"/>`;
+  for (let i = 0; i < 8; i++) {
+    const a = i / 8 * 2 * Math.PI;
+    s += `<line x1="${cx + Math.cos(a) * slit}" y1="${cy + Math.sin(a) * slit}" x2="${cx + Math.cos(a) * r}" y2="${cy + Math.sin(a) * r}" stroke="${COL.cut}" stroke-width=".25"/>`;
+  }
+  return s;
+}
+function wing(x, y, L, Wd, col) {
+  let s = `<rect x="${x}" y="${y}" width="${L}" height="${Wd}" fill="${col}" stroke="${COL.cut}" stroke-width=".25"/>`;
+  for (let i = 1; i < P.panels; i++) s += `<line x1="${x + i * L / P.panels}" y1="${y}" x2="${x + i * L / P.panels}" y2="${y + Wd}" stroke="rgba(0,0,0,.55)" stroke-width=".5"/>`;
+  const nx = Math.max(2, Math.round(L / 4)), ny = Math.max(2, Math.round(Wd / 4));
+  for (let i = 1; i < nx; i++) s += `<line x1="${x + i * L / nx}" y1="${y}" x2="${x + i * L / nx}" y2="${y + Wd}" stroke="rgba(0,0,0,.25)" stroke-width=".3"/>`;
+  for (let j = 1; j < ny; j++) s += `<line x1="${x}" y1="${y + j * Wd / ny}" x2="${x + L}" y2="${y + j * Wd / ny}" stroke="rgba(0,0,0,.25)" stroke-width=".3"/>`;
+  return s;
+}
+const bus = (x, y, w, l, col, n) => `<rect x="${x}" y="${y}" width="${l}" height="${w}" fill="${col}" stroke="${COL.cut}" stroke-width=".25"/>` +
+  `<circle cx="${x + l / 2}" cy="${y + w / 2}" r="${w * .36}" fill="#fff"/>` + txt(x + l / 2, y + w / 2 + w * .19, n, w * .5, '#111', 'middle');
+
+// ---------- sheets ----------
+let tex = null;
+async function render() {
+  tex = tex || await earthTexture();
+  const [PW, PH] = PAPER[P.paper], M = 10;
+  const R = P.earthD / 2, G = goresImage(tex, R, Math.max(4, Math.round(P.gores)), P.poleGap);
+  P.panels = Math.max(1, Math.round(P.panels));
+
+  let s1 = svgEl(PW, PH) + txt(M, 12, 'Piece wraps — print at 100% / Actual size', 3.5, '#111') + ruler(M, 22);
+  let y = 32;
+  const Rm = P.moonD / 2, rc = Rm * Math.PI / 2;
+  if (P.earthStyle === 'cap') {
+    const C = earthCapImage(tex, R, P.capTo);
+    s1 += txt(M, y, `EARTH cap · Ø${(2 * C.r).toFixed(1)} mm · plain paper + glue stick · cut the circle and the 12 white slits, centre it on the north pole`, 2.8);
+    s1 += earthCap(M + C.r, y + 4 + C.r, C, R);
+    const mx = M + 2 * C.r + 12;
+    s1 += txt(mx, y + 10, 'MOON caps · cut the circle + 8 slits,', 2.8) + txt(mx, y + 14, 'fold over the top of the sphere (spares)', 2.8);
+    for (let i = 0; i < 4; i++) s1 += moonCap(mx + rc + (i % 2) * (2 * rc + 6), y + 20 + rc + Math.floor(i / 2) * (2 * rc + 6), Rm);
+    y += 2 * C.r + 14;
+  } else {
+    s1 += txt(M, y, `EARTH · ${G.w.toFixed(1)} × ${G.h.toFixed(1)} mm · plain paper + glue stick · cut around the strips, glue strip by strip from the north pole down`, 2.8);
+    s1 += `<image href="${G.url}" x="${M}" y="${y + 3}" width="${G.w}" height="${G.h}" preserveAspectRatio="none"/>`;
+    if (G.w > PW - 2 * M) s1 += txt(M, y + G.h + 8, '⚠ Earth strips wider than the page: use more strips', 3, '#c00');
+    y += G.h + 12;
+    s1 += txt(M, y, 'MOON caps · cut the circle and the 8 slits, fold over the top of the sphere (spares included)', 2.8);
+    for (let i = 0; i < 4; i++) s1 += moonCap(M + rc + i * (2 * rc + 6), y + 4 + rc, Rm);
+    y += 2 * rc + 14;
+  }
+  s1 += txt(M, y, 'BASE RINGS · sticker paper · cut the dashed slit to slip it around the post', 2.8);
+  const rings = [[P.earthBase, P.earthHole, COL.earthBase, 'Earth'], [P.moonBase, P.moonHole, COL.moonBase, 'Moon'],
+                 [P.seldonBase, P.seldonHole, COL.s1, 'Seldon-1'], [P.seldonBase, P.seldonHole, COL.s2, 'Seldon-2']];
+  let x = M; const rowH = Math.max(...rings.map(r => r[0]));
+  for (const [D, h, c, n] of rings) { s1 += ring(x + D / 2, y + 4 + rowH / 2, D, h, c, `${n} Ø${D}`); x += D + 8; }
+  y += rowH + 16;
+  [['s1', '1', 'Seldon-1'], ['s2', '2', 'Seldon-2']].forEach(([c, n, name], i) => {
+    const top = y + i * (P.wingW + 14);
+    s1 += txt(M, top, `${name.toUpperCase()} · sticker paper · 2 wing tops + 1 spare, body top`, 2.8);
+    for (let k = 0; k < 3; k++) s1 += wing(M + k * (P.wingL + 4), top + 3, P.wingL, P.wingW, COL[c]);
+    s1 += bus(M + 3 * (P.wingL + 4) + 4, top + 3, P.busW, P.busL, COL[c], n);
+    s1 += bus(M + 3 * (P.wingL + 4) + P.busL + 8, top + 3, P.busW, P.busL, COL[c], n);
+  });
+  s1 += '</svg>';
+
+  document.getElementById('sheets').innerHTML =
+    `<div class="sheet" style="width:${PW}mm;height:${PH}mm">${s1}</div>`;
+  let st = document.getElementById('pagesize');
+  if (!st) { st = document.createElement('style'); st.id = 'pagesize'; document.head.appendChild(st); }
+  st.textContent = `@media print { @page { size: ${PW}mm ${PH}mm; } }`;
+}
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,241 @@
+#!/bin/zsh
+# Operator launcher for the overhead tracking system. Run `./ops help`.
+cd "${0:A:h}" || exit 1
+ROOT=$PWD
+RUN=$ROOT/run
+PY=$ROOT/.venv/bin/python
+BASE=http://127.0.0.1:8765
+mkdir -p "$RUN"
+
+usage() {
+cat <<'H'
+Usage: ./ops <command> [args]
+
+  setup                         create .venv and install requirements.txt
+  start [options]               (re)start tracker + bridge in the background
+      --detector color|dots|blink   default: color
+      --pieces magnets|purple_black|leds  default: magnets (color detector only)
+      --no-browser                  do not open the control panel
+  stop                          stop tracker + bridge (and stray processes)
+  restart                       stop, then start with the previous start args
+  status                        process + feed health; exit 1 if unhealthy
+  logs [tracker|bridge]         tail -f a log (default: tracker)
+  camera [exposure_ms] [gain] [focus]
+                                set camera via bridge, else ./camset.sh
+  help                          this text
+
+Files: run/*.pid, run/tracker.log, run/bridge.log, run/last_start
+Control panel: http://localhost:8765/control   Demo: http://localhost:8765/
+H
+}
+
+# ---------- helpers ----------
+pid_alive() { [[ -n $1 ]] && kill -0 "$1" 2>/dev/null; }
+read_pid() { [[ -f $RUN/$1.pid ]] && cat "$RUN/$1.pid" 2>/dev/null; }
+
+rotate_log() {  # rotate_log file [max_bytes]; keeps .1 .2 .3
+  local f=$1 max=${2:-5242880} sz
+  [[ -f $f ]] || return 0
+  sz=$(stat -f %z "$f" 2>/dev/null || echo 0)
+  (( sz > max )) || return 0
+  rm -f "$f.3"
+  [[ -f $f.2 ]] && mv "$f.2" "$f.3"
+  [[ -f $f.1 ]] && mv "$f.1" "$f.2"
+  mv "$f" "$f.1"
+}
+
+# kill one pid gracefully, then forcefully
+kill_pid() {
+  local p=$1 i
+  pid_alive "$p" || return 0
+  kill "$p" 2>/dev/null
+  for i in {1..20}; do pid_alive "$p" || return 0; sleep 0.15; done
+  kill -9 "$p" 2>/dev/null
+}
+
+stop_all() {
+  local n p
+  for n in tracker bridge; do
+    p=$(read_pid $n)
+    if pid_alive "$p"; then kill_pid "$p"; echo "stopped $n (pid $p)"; fi
+    rm -f "$RUN/$n.pid"
+  done
+  [[ -n $OPS_NO_STRAY ]] && return 0
+  # stray processes started from this folder
+  local pats=("$ROOT/tracker.py" "$ROOT/dots.py" "$ROOT/blink.py" "$ROOT/orbit_server.py" "$ROOT/camview" "$ROOT/orbit/orbit_server.py")
+  local pat pids
+  for pat in "${pats[@]}"; do pkill -f -- "$pat" 2>/dev/null; done
+  # relative invocations (python tracker.py ...) — match by cwd
+  for p in $(pgrep -f 'tracker\.py|dots\.py|blink\.py|orbit_server\.py|camview' 2>/dev/null); do
+    [[ $p == $$ ]] && continue
+    local cwd; cwd=$(lsof -a -p "$p" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')
+    if [[ $cwd == $ROOT || $cwd == $ROOT/orbit ]]; then
+      local cmd; cmd=$(ps -p "$p" -o command= 2>/dev/null)
+      [[ $cmd == *ops* ]] && continue
+      kill "$p" 2>/dev/null; echo "killed stray pid $p"
+    fi
+  done
+  sleep 0.5
+  for p in $(pgrep -f 'tracker\.py|dots\.py|blink\.py|orbit_server\.py' 2>/dev/null); do
+    local cwd; cwd=$(lsof -a -p "$p" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')
+    [[ $cwd == $ROOT || $cwd == $ROOT/orbit ]] && kill -9 "$p" 2>/dev/null
+  done
+  return 0
+}
+
+# prints "age fps calibrated bumped exp gain pieces..." via python on /status JSON
+fetch_status() { curl -s -m 2 "$BASE/status" 2>/dev/null; }
+
+summarize() {  # stdin: status json; prints summary, exit 0 if healthy
+  local code
+  code=$(cat <<'P'
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("  /status: unreadable"); sys.exit(2)
+f = d.get("feed") or d.get("latest") or d
+age = d.get("age", d.get("feed_age"))
+fps = f.get("fps"); cam = f.get("camera") or {}
+print("  feed age: %s s   fps: %s   source: %s" % (
+    "n/a" if age is None else "%.2f" % age, fps, f.get("source")))
+print("  calibrated: %s (%s)   bumped: %s" % (f.get("calibrated"), f.get("calib"), f.get("bumped")))
+print("  camera: ok=%s exposure=%s ms gain=%s focus=%s" % (
+    cam.get("ok"), cam.get("exposure_ms"), cam.get("gain"), cam.get("focus")))
+pcs = f.get("pieces") or {}
+if pcs:
+    print("  pieces: " + ", ".join("%s=%s@%s" % (k, v.get("state"), v.get("cell")) for k, v in pcs.items()))
+else:
+    print("  pieces: none")
+ok = age is not None and age < 1.5
+sys.exit(0 if ok else 1)
+P
+)
+  ${PY:-python3} -c "$code"
+}
+
+fresh_feed() {  # 0 if /status shows age < 1.5
+  fetch_status | ${PY:-python3} -c '
+import sys,json
+d=json.load(sys.stdin); a=d.get("age", d.get("feed_age"))
+sys.exit(0 if a is not None and a<1.5 else 1)' 2>/dev/null
+}
+
+uptime_of() { ps -p "$1" -o etime= 2>/dev/null | tr -d ' '; }
+
+# ---------- commands ----------
+cmd_setup() {
+  [[ -x $PY ]] || { echo "creating .venv"; python3 -m venv "$ROOT/.venv" || exit 1; }
+  "$PY" -m pip install --upgrade pip >/dev/null 2>&1
+  "$PY" -m pip install -r "$ROOT/requirements.txt" && echo "setup done"
+}
+
+cmd_start() {
+  local det=color pieces=magnets browser=1
+  while (( $# )); do
+    case $1 in
+      --detector) det=$2; shift 2;;
+      --pieces) pieces=$2; shift 2;;
+      --no-browser) browser=0; shift;;
+      *) echo "unknown option: $1"; usage; exit 2;;
+    esac
+  done
+  case $det in color|dots|blink) ;; *) echo "bad --detector $det"; exit 2;; esac
+  case $pieces in magnets|purple_black|leds) ;; *) echo "bad --pieces $pieces"; exit 2;; esac
+  [[ -x $PY ]] || { echo "no .venv — run ./ops setup"; exit 1; }
+  local script=tracker.py targs=(--headless)
+  case $det in
+    color) script=tracker.py; targs=(--headless --pieces $pieces);;
+    dots) script=dots.py;;
+    blink) script=blink.py;;
+  esac
+  [[ -f $ROOT/$script ]] || { echo "missing $script"; exit 1; }
+  printf '%s\n' "--detector $det --pieces $pieces$([[ $browser == 0 ]] && echo ' --no-browser')" > "$RUN/last_start"
+
+  stop_all
+  rotate_log "$RUN/tracker.log"; rotate_log "$RUN/bridge.log"
+
+  nohup "$PY" "$ROOT/$script" "${targs[@]}" >>"$RUN/tracker.log" 2>&1 </dev/null &
+  local tp=$!; disown $tp 2>/dev/null; echo $tp > "$RUN/tracker.pid"
+  ( cd "$ROOT/orbit" && nohup "$PY" orbit_server.py >>"$RUN/bridge.log" 2>&1 </dev/null & echo $! > "$RUN/bridge.pid" )
+  local bp; bp=$(read_pid bridge)
+  echo "started $script (pid $tp), bridge (pid $bp)"
+
+  local i ok=1
+  for i in {1..16}; do
+    sleep 0.5
+    pid_alive "$tp" || { echo "tracker exited early — see run/tracker.log"; tail -5 "$RUN/tracker.log"; break; }
+    if fresh_feed; then ok=0; break; fi
+  done
+  if (( ok == 0 )); then
+    local line; line=$(fetch_status | ${PY} -c '
+import sys,json
+d=json.load(sys.stdin); f=d.get("feed") or d.get("latest") or d
+print("OK fps=%s calibrated=%s source=%s"%(f.get("fps"),f.get("calibrated"),f.get("source")))' 2>/dev/null)
+    echo "healthy: ${line:-OK}"
+  else
+    echo "WARNING: no fresh feed within 8 s (see ./ops logs)"
+  fi
+  (( browser )) && open "http://localhost:8765/control" 2>/dev/null
+  return $ok
+}
+
+cmd_stop() { stop_all; echo "stopped"; }
+
+cmd_restart() {
+  # New options win; with none, reuse the last start's options.
+  local args=("$@")
+  (( ${#args} == 0 )) && [[ -f $RUN/last_start ]] && args=(${=$(cat "$RUN/last_start")})
+  cmd_start "${args[@]}"
+}
+
+cmd_status() {
+  local n p bad=0
+  for n in tracker bridge; do
+    p=$(read_pid $n)
+    if pid_alive "$p"; then echo "$n: running pid $p uptime $(uptime_of $p)"
+    else echo "$n: stopped"; bad=1; fi
+  done
+  local js; js=$(fetch_status)
+  if [[ -z $js ]]; then echo "bridge /status: unreachable"; exit 1; fi
+  echo "$js" | summarize || bad=1
+  (( bad )) && { echo "UNHEALTHY"; exit 1; }
+  echo "HEALTHY"
+}
+
+cmd_logs() {
+  local w=${1:-tracker}
+  [[ $w == tracker || $w == bridge ]] || { usage; exit 2; }
+  touch "$RUN/$w.log"; tail -n 50 -f "$RUN/$w.log"
+}
+
+cmd_camera() {
+  local ms=$1 gain=$2 focus=$3 body
+  body=$(${PY:-python3} - "$ms" "$gain" "$focus" <<'P'
+import sys, json
+d = {"cmd": "camera"}
+for k, v in zip(("exposure_ms", "gain", "focus"), sys.argv[1:4]):
+    if v != "": d[k] = float(v) if k == "exposure_ms" else int(float(v))
+print(json.dumps(d))
+P
+)
+  if curl -s -m 2 -o /dev/null "$BASE/status" && \
+     curl -s -m 3 -X POST -H 'Content-Type: application/json' -d "$body" "$BASE/cmd" >/dev/null; then
+    echo "sent via bridge: $body"
+  else
+    echo "bridge not reachable — using camset.sh (stop the tracker first if it holds the camera)"
+    ./camset.sh "$@"
+  fi
+}
+
+case ${1:-help} in
+  setup) cmd_setup;;
+  start) shift; cmd_start "$@";;
+  stop) cmd_stop;;
+  restart) shift; cmd_restart "$@";;
+  status) cmd_status;;
+  logs) shift; cmd_logs "$@";;
+  camera) shift; cmd_camera "$@";;
+  help|-h|--help) usage;;
+  *) echo "unknown command: $1"; usage; exit 2;;
+esac

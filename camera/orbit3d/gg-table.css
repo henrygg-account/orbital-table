@@ -1,0 +1,79 @@
+/* gg-table.css — General Galactic tokens for the orbital table.
+   Values copied from the design system (tokens/colors.css, typography.css) so the TV page runs offline.
+   Brand rule: NO BOLD, EVER. Weights 400 and 500 only. Emphasis = size, uppercase, tracking, colour. */
+@font-face { font-family: 'General Sans'; src: url('assets/fonts/GeneralSans-Regular.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'General Sans'; src: url('assets/fonts/GeneralSans-Medium.woff2') format('woff2'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'Space Mono'; src: url('assets/fonts/SpaceMono-Regular.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+
+:root {
+  --gg-black: #0a0d0d; --gg-ink-900: #0d1113; --gg-ink-800: #12171a; --gg-ink-700: #1a2226; --gg-ink-600: #293338;
+  --gg-fog-400: #5c6b70; --gg-fog-300: #8a969a; --gg-fog-200: #b8c1c3; --gg-fog-100: #dde3e4; --gg-white: #f6f8f8;
+  --gg-mint-500: #0ee3a6; --gg-mint-300: #6ff5cf; --gg-mint-900: #063f30;
+  --gg-violet-900: #1c1740; --gg-violet-700: #332968; --gg-violet-400: #6a56b8;
+  --gg-amber-700: #8f5030; --gg-amber-500: #c97a4a;
+  --border-default: rgba(246,248,248,.14); --border-subtle: rgba(246,248,248,.08);
+  --font-mono: 'Space Mono', ui-monospace, Menlo, monospace;
+  --font-display: 'General Sans', ui-sans-serif, system-ui, sans-serif;
+  --ease-standard: cubic-bezier(.4,0,.2,1);
+  --mm: 1.34px;                         /* px per TV millimetre; modes.js sets this from the live scale */
+}
+html, body { background: var(--gg-black); color: var(--gg-fog-100); font-family: var(--font-display); font-weight: 400; }
+
+/* ---- text items (all positioned by modes.js; rotation via --rot keeps the box size unchanged) ---- */
+.mt { position: fixed; left: 0; top: 0; pointer-events: none; white-space: nowrap; line-height: 1.2;
+      font-family: var(--font-mono); font-weight: 400; color: var(--gg-fog-100); transform-origin: 50% 50%; }
+.mt i, .rail i { font-style: normal; font-family: var(--font-mono); font-weight: 400; font-size: .6em; color: var(--gg-fog-200); margin-left: .3em; letter-spacing: .04em; }
+.mt b, .rail b { font-weight: 500; font-family: var(--font-display); color: var(--gg-white); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+
+.mt-eyebrow, .rail .eyebrow { font-family: var(--font-mono); font-size: max(8px, calc(var(--mm) * 7)); letter-spacing: .14em; text-transform: uppercase; color: var(--gg-fog-200); }
+.mt-eyebrow .sq, .rail .sq { display: inline-block; width: .6em; height: .6em; background: var(--gg-mint-500); margin-right: .9em; vertical-align: .05em; }
+.mt-hero, .rail .hero { font-family: var(--font-display); font-weight: 500; font-size: calc(var(--mm) * 40); line-height: 1; color: var(--gg-white); font-variant-numeric: tabular-nums; letter-spacing: -.01em; margin-top: calc(var(--mm) * 3); }
+.mt-hero i, .rail .hero i { font-size: .3em; }
+.rail .metric .ml { font-family: var(--font-mono); font-size: max(8px, calc(var(--mm) * 7)); letter-spacing: .14em; text-transform: uppercase; color: var(--gg-fog-300); margin-bottom: calc(var(--mm) * 2); }
+.rail .metric .mv { font-family: var(--font-display); font-weight: 500; font-size: max(10px, calc(var(--mm) * 16)); line-height: 1; color: var(--gg-white); font-variant-numeric: tabular-nums; }
+.rail .metric .mv i { font-size: .55em; }
+.mt-label { font-size: max(8px, calc(var(--mm) * 8)); letter-spacing: .1em; text-transform: uppercase; color: var(--gg-fog-100);
+            text-shadow: 0 0 calc(var(--mm) * 2.5) var(--gg-black), 0 0 calc(var(--mm) * 2.5) var(--gg-black); }
+.mt-label b { font-size: 1.15em; }
+.mt-contour { font-size: max(9px, calc(var(--mm) * 10)); letter-spacing: .06em; color: var(--gg-fog-100); background: var(--gg-ink-900); padding: 0 calc(var(--mm) * 1.5); border-radius: 2px; }
+.mt-msg { font-family: var(--font-display); font-weight: 400; font-size: max(10px, calc(var(--mm) * 12)); color: var(--gg-fog-100); }
+.mt-chip { font-size: max(8px, calc(var(--mm) * 8)); letter-spacing: .14em; text-transform: uppercase; color: var(--gg-fog-300); }
+.mt-chip.on { color: var(--gg-white); }
+.mt-slv { font-family: var(--font-display); font-weight: 500; font-size: max(10px, calc(var(--mm) * 10)); color: var(--gg-white); font-variant-numeric: tabular-nums; }
+.mt-slv i { font-size: .6em; }
+.mt-readout { font-family: var(--font-display); font-weight: 500; font-size: max(12px, calc(var(--mm) * 20)); line-height: 1; color: var(--gg-white); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.mt-readout i { font-size: .45em; }
+.mt-foot { font-size: max(7px, calc(var(--mm) * 6.5)); letter-spacing: .12em; text-transform: uppercase; color: var(--gg-fog-400); }
+
+/* ---- edge rails: one along each long edge, the far one rotated 180° ---- */
+.rail { position: fixed; pointer-events: none; display: grid; grid-template-columns: auto 1fr auto; align-items: end; column-gap: calc(var(--mm) * 24); transform-origin: 50% 50%; }
+.rail .r-left { display: flex; flex-direction: column; }
+.rail .r-mid { justify-self: center; align-self: center; font-family: var(--font-display); font-size: max(10px, calc(var(--mm) * 12)); color: var(--gg-fog-100); }
+.rail .r-mets { display: flex; gap: calc(var(--mm) * 18); align-items: flex-end; }
+.rail .r-msg { font-family: var(--font-display); font-size: max(10px, calc(var(--mm) * 12)); color: var(--gg-fog-100); }
+
+#lockup { position: fixed; pointer-events: none; transform-origin: 50% 50%; opacity: .55; }
+
+/* ---- orbits mode: transfer blocks (ET bottom-left, GT bottom-right) in the edge rails ---- */
+.rail .xf { display: flex; flex-direction: column; gap: calc(var(--mm) * 5); }
+.rail .xf-mets { display: flex; gap: calc(var(--mm) * 16); align-items: flex-end; }
+.rail .metric .mv.over { color: #e2604f; }
+
+/* ---- orbits (kiosk) view: readability first. Text sits on dark plates; colours identify things, not decorate ---- */
+.mt.mt-tag { font-family: var(--font-display); font-size: max(11px, calc(var(--mm) * 9.5)); color: var(--gg-white); background: rgba(10,13,13,.82);
+  padding: calc(var(--mm) * 1.5) calc(var(--mm) * 4); border-radius: calc(var(--mm) * 2); letter-spacing: .01em; font-variant-numeric: tabular-nums; }
+.mt.mt-tag span { font-family: var(--font-mono); letter-spacing: .1em; }
+.mt.mt-tag i { font-size: .8em; color: var(--gg-fog-200); }
+.mt.mt-tag.dim { color: var(--gg-fog-200); font-size: max(10px, calc(var(--mm) * 8)); }
+.mt.xp { white-space: normal; box-sizing: border-box; padding: calc(var(--mm) * 5) calc(var(--mm) * 7); background: rgba(10,13,13,.88);
+  border: 1px solid rgba(246,248,248,.16); border-radius: calc(var(--mm) * 4); font-family: var(--font-display); color: var(--gg-white); line-height: 1.25; }
+.xp .xp-h { font-family: var(--font-mono); font-size: max(11px, calc(var(--mm) * 9)); letter-spacing: .12em; text-transform: uppercase; display: flex; align-items: center; gap: calc(var(--mm) * 4); }
+.xp .sw { display: inline-block; width: calc(var(--mm) * 14); height: calc(var(--mm) * 4); border-radius: 2px; }
+.xp .xp-s { font-size: max(10px, calc(var(--mm) * 8)); color: var(--gg-fog-200); margin-top: calc(var(--mm) * 2); }
+.xp .xp-s.big { font-size: max(12px, calc(var(--mm) * 12)); color: var(--gg-white); margin: 0; }
+.xp .xp-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: calc(var(--mm) * 6); margin-top: calc(var(--mm) * 5); }
+.xp .xp-k { font-family: var(--font-mono); font-size: max(9px, calc(var(--mm) * 7)); letter-spacing: .12em; text-transform: uppercase; color: var(--gg-fog-200); }
+.xp .xp-v { font-size: max(16px, calc(var(--mm) * 17)); font-weight: 500; font-variant-numeric: tabular-nums; margin-top: calc(var(--mm) * 1.5); white-space: nowrap; }
+.xp .xp-v i { font-style: normal; font-family: var(--font-mono); font-size: .5em; color: var(--gg-fog-200); margin-left: .25em; }
+.xp .xp-n { font-size: max(10px, calc(var(--mm) * 7.5)); color: var(--gg-fog-200); margin-top: calc(var(--mm) * 4); }
+.xp .bad { color: #ff6b5e; }

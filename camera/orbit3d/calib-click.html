@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Click Calibration</title>
+<style>
+  :root { --bg: #0a0d0d; --fg: #dde3e4; --dim: #8a969a; --line: #2a3336; --mint: #0ee3a6; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px/1.4 ui-monospace, Menlo, monospace; overflow: hidden; }
+  #bar { position: fixed; left: 0; right: 0; top: 0; display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; padding: 8px 12px; background: #0d1113; border-bottom: 1px solid var(--line); z-index: 2; }
+  #bar label { color: var(--dim); }
+  #bar input { width: 56px; background: #12171a; color: var(--fg); border: 1px solid var(--line); padding: 3px 5px; font: inherit; }
+  button { background: #12171a; color: var(--fg); border: 1px solid #5c6b70; padding: 5px 12px; font: inherit; cursor: pointer; }
+  button.go { border-color: var(--mint); color: var(--mint); }
+  #msg { color: var(--dim); flex: 1 1 260px; }
+  canvas { position: fixed; left: 0; top: 0; touch-action: none; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <span>Drag the 4 handles onto the TV's outer corners.</span>
+  <label>bezel mm side <input id="side" value="13.46"></label>
+  <label>top <input id="top" value="13.46"></label>
+  <label>bottom (logo) <input id="bottom" value="18.70"></label>
+  <label><input id="live" type="checkbox" checked style="width:auto"> live image</label>
+  <button id="save" class="go">Save calibration</button>
+  <span id="msg"></span>
+</div>
+<canvas id="c"></canvas>
+<script>
+// Manual calibration by clicking on the live camera image (live.py serves /frame.jpg, /calib.json, /calibrate_corners).
+// The four handles are the TV body's outer corners in screen order; the screen area inside comes from the bezel sizes
+// (all 0 = drag onto the screen's own corners). Mint outline = the screen as it will be calibrated. Dots = live pieces.
+const $ = id => document.getElementById(id), cv = $('c'), g = cv.getContext('2d');
+const NAMES = ['screen top-left', 'screen top-right', 'screen bottom-right', 'screen bottom-left'];
+let img = new Image(), FW = 2048, FH = 1536, SW = 1428.5, SH = 803.5, pts = null, drag = -1, hover = -1, feed = null, view = { s: 1, x: 0, y: 0 };
+const bez = () => ({ side: +$('side').value || 0, top: +$('top').value || 0, bottom: +$('bottom').value || 0 });
+const bodyMm = () => { const b = bez(); return [[-b.side, -b.top], [SW + b.side, -b.top], [SW + b.side, SH + b.bottom], [-b.side, SH + b.bottom]]; };
+
+// 4-point homography (src -> dst), and applying one
+function homog(src, dst) {
+  const A = [], B = [];
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = src[i], [u, v] = dst[i];
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); B.push(u);
+    A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); B.push(v);
+  }
+  for (let c = 0; c < 8; c++) {                       // Gaussian elimination with partial pivoting
+    let p = c; for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    [A[c], A[p]] = [A[p], A[c]]; [B[c], B[p]] = [B[p], B[c]];
+    for (let r = 0; r < 8; r++) if (r !== c) { const f = A[r][c] / A[c][c]; for (let k = c; k < 8; k++) A[r][k] -= f * A[c][k]; B[r] -= f * B[c]; }
+  }
+  const h = B.map((b, i) => b / A[i][i]); return [[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1]];
+}
+const ap = (H, x, y) => { const w = H[2][0] * x + H[2][1] * y + H[2][2]; return [(H[0][0] * x + H[0][1] * y + H[0][2]) / w, (H[1][0] * x + H[1][1] * y + H[1][2]) / w]; };
+function inv3(m) {
+  const [a, b, c] = m[0], [d, e, f] = m[1], [g_, h, i] = m[2], A = e * i - f * h, B = -(d * i - f * g_), C = d * h - e * g_, det = a * A + b * B + c * C;
+  return [[A / det, -(b * i - c * h) / det, (b * f - c * e) / det], [B / det, (a * i - c * g_) / det, -(a * f - c * d) / det], [C / det, -(a * h - b * g_) / det, (a * e - b * d) / det]];
+}
+
+function layout() {
+  cv.width = innerWidth * devicePixelRatio; cv.height = innerHeight * devicePixelRatio;
+  cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px';
+  const top = $('bar').offsetHeight + 8, s = Math.min((innerWidth - 16) / FW, (innerHeight - top - 8) / FH);
+  view = { s, x: (innerWidth - FW * s) / 2, y: top + (innerHeight - top - 8 - FH * s) / 2 };
+}
+const toScr = (x, y) => [view.x + x * view.s, view.y + y * view.s], toCam = (x, y) => [(x - view.x) / view.s, (y - view.y) / view.s];
+
+async function init() {
+  const c = await (await fetch('/calib.json')).json();
+  if (c.frame_wh) [FW, FH] = c.frame_wh; [SW, SH] = c.screen_mm;
+  layout();
+  if (c.H) { const Hi = inv3(c.H); pts = bodyMm().map(([x, y]) => ap(Hi, x, y)); }   // start from the current calibration
+  else pts = [[FW * .2, FH * .2], [FW * .8, FH * .2], [FW * .8, FH * .8], [FW * .2, FH * .8]];
+  loadImg();
+}
+function loadImg() { const im = new Image(); im.onload = () => { img = im; if (im.naturalWidth !== FW) { FW = im.naturalWidth; FH = im.naturalHeight; layout(); } }; im.src = '/frame.jpg?' + Date.now(); }
+setInterval(() => { if ($('live').checked && drag < 0) loadImg(); }, 700);
+new EventSource('/events').onmessage = e => { try { feed = JSON.parse(e.data); } catch {} };
+addEventListener('resize', layout);
+
+cv.addEventListener('pointerdown', e => { if (!pts) return; const [x, y] = toCam(e.clientX, e.clientY); let best = -1, bd = 40 / view.s; pts.forEach((p, i) => { const d = Math.hypot(p[0] - x, p[1] - y); if (d < bd) { bd = d; best = i; } }); drag = best; if (best >= 0) cv.setPointerCapture(e.pointerId); });
+cv.addEventListener('pointermove', e => { const [x, y] = toCam(e.clientX, e.clientY); if (drag >= 0) pts[drag] = [Math.max(0, Math.min(FW, x)), Math.max(0, Math.min(FH, y))]; else if (pts) hover = pts.findIndex(p => Math.hypot(p[0] - x, p[1] - y) < 40 / view.s); });
+cv.addEventListener('pointerup', () => drag = -1);
+addEventListener('keydown', e => {             // arrow keys nudge the handle under the mouse by 1 camera px (shift: 5)
+  const i = drag >= 0 ? drag : hover; if (i < 0 || !e.key.startsWith('Arrow')) return;
+  const d = e.shiftKey ? 5 : 1; pts[i][0] += e.key === 'ArrowRight' ? d : e.key === 'ArrowLeft' ? -d : 0; pts[i][1] += e.key === 'ArrowDown' ? d : e.key === 'ArrowUp' ? -d : 0; e.preventDefault();
+});
+
+$('save').onclick = async () => {
+  $('msg').textContent = 'Saving...';
+  try {
+    const r = await (await fetch('/calibrate_corners', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ corners: pts, bezel: bez() }) })).json();
+    $('msg').textContent = r.ok ? 'Saved. The demo uses it now (no restart needed).' : 'Failed: ' + r.error;
+  } catch (e) { $('msg').textContent = 'Failed: ' + e; }
+};
+
+function draw() {
+  g.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  g.fillStyle = '#0a0d0d'; g.fillRect(0, 0, innerWidth, innerHeight);
+  if (img.complete && img.naturalWidth) g.drawImage(img, view.x, view.y, FW * view.s, FH * view.s);
+  if (pts) {
+    const H = homog(bodyMm(), pts);                  // screen mm -> camera px
+    const poly = (P, col, w) => { g.strokeStyle = col; g.lineWidth = w; g.beginPath(); P.forEach((p, i) => { const [x, y] = toScr(...p); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.closePath(); g.stroke(); };
+    poly(pts, '#ffffff', 1.5);
+    poly([[0, 0], [SW, 0], [SW, SH], [0, SH]].map(([x, y]) => ap(H, x, y)), '#0ee3a6', 1.5);
+    { const [x, y] = toScr(...ap(H, SW / 2, SH + bez().bottom + 30)); g.fillStyle = '#8a969a'; g.font = '12px ui-monospace, Menlo, monospace'; g.textAlign = 'center'; g.fillText('bottom edge (logo)', x, y); }
+    pts.forEach((p, i) => {
+      const [x, y] = toScr(...p);
+      g.strokeStyle = i === drag || i === hover ? '#0ee3a6' : '#ffffff'; g.lineWidth = 2;
+      g.beginPath(); g.arc(x, y, 9, 0, Math.PI * 2); g.stroke();
+      g.beginPath(); g.moveTo(x - 16, y); g.lineTo(x + 16, y); g.moveTo(x, y - 16); g.lineTo(x, y + 16); g.lineWidth = 1; g.stroke();
+      g.fillStyle = '#dde3e4'; g.textAlign = 'left'; g.fillText(NAMES[i], x + 14, y - 12);
+    });
+    const Hc = inv3(H);                               // camera px -> screen mm, for the piece readouts
+    for (const [k, p] of Object.entries(feed?.pieces || {})) {
+      if (p.seen_ago > 1) continue;
+      const cx = p.u * FW, cy = p.v * FH, [x, y] = toScr(cx, cy), [mx, my] = ap(Hc, cx, cy);
+      g.fillStyle = '#ffb547'; g.beginPath(); g.arc(x, y, 4, 0, Math.PI * 2); g.fill();
+      g.fillText(`${k}  ${mx.toFixed(0)}, ${my.toFixed(0)} mm`, x + 8, y + 4);
+    }
+    const i = drag >= 0 ? drag : hover;              // loupe: 4x around the active handle
+    if (i >= 0 && img.naturalWidth) {
+      const R = 40, Z = 4, [px, py] = pts[i], [lx, ly] = toScr(px, py), ox = lx + (lx > innerWidth / 2 ? -R * Z - 30 : 30), oy = Math.max(60, ly - R * Z / 2);
+      g.save(); g.beginPath(); g.rect(ox, oy, R * Z, R * Z); g.clip();
+      g.imageSmoothingEnabled = false; g.drawImage(img, px - R / 2, py - R / 2, R, R, ox, oy, R * Z, R * Z);
+      g.strokeStyle = '#0ee3a6'; g.beginPath(); g.moveTo(ox + R * Z / 2, oy); g.lineTo(ox + R * Z / 2, oy + R * Z); g.moveTo(ox, oy + R * Z / 2); g.lineTo(ox + R * Z, oy + R * Z / 2); g.stroke();
+      g.restore(); g.strokeStyle = '#5c6b70'; g.strokeRect(ox, oy, R * Z, R * Z);
+    }
+  }
+  requestAnimationFrame(draw);
+}
+init(); requestAnimationFrame(draw);
+</script>
+</body>
+</html>

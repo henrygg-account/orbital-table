@@ -1,0 +1,25 @@
+# environments / caches
+.venv*/
+__pycache__/
+*.pyc
+.DS_Store
+.claude/
+*.log
+
+# separate repo (cloned for the engagement sim): github.com/henrygg-account/gengalactic-demos
+camera/gengalactic-demos/
+
+# training data, recordings, model weights (large; kept locally)
+camera/training/data*/
+camera/training/videos/
+camera/training/runs/
+camera/training/weights/
+*.pt
+*.mlpackage/
+camera/training/calib.json
+
+# sky tile pyramid (227 MB): rebuild with camera/orbit3d/tools/make_sky_tiles.py from NASA SVS Deep Star Maps 2020
+camera/orbit3d/assets/sky/
+
+# compiled binary (source: camera/camview.swift)
+camera/camview

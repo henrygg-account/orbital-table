@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Engagement Control</title>
+<link rel="stylesheet" href="gg-table.css">
+<style>
+  :root { --ours: #0ee3a6; --adv: #e2604f; --line: rgba(246,248,248,.12); --dim: #8a969a; }
+  html, body { margin: 0; background: #0a0d0d; color: #dde3e4; font-family: var(--font-display); font-weight: 400; }
+  body { padding: 28px 32px 40px; max-width: 1180px; margin: 0 auto; }
+  .eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); display: flex; align-items: center; gap: 10px; }
+  .eyebrow .sq { width: 8px; height: 8px; background: var(--ours); display: inline-block; }
+  h1 { font-weight: 500; font-size: 34px; margin: 8px 0 24px; letter-spacing: -.01em; color: #f6f8f8; }
+  .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .card { border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px 8px; background: #0d1113; }
+  .card h2 { font-family: var(--font-mono); font-weight: 400; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; margin: 0 0 14px; display: flex; align-items: center; gap: 10px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .f { margin-bottom: 16px; }
+  .f label { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+  .f .v { font-family: var(--font-display); font-size: 17px; letter-spacing: 0; color: #f6f8f8; text-transform: none; font-variant-numeric: tabular-nums; }
+  .f .v i { font-style: normal; font-size: 11px; color: var(--dim); margin-left: 3px; }
+  input[type=range] { width: 100%; accent-color: var(--acc, #dde3e4); }
+  .ours { --acc: var(--ours); } .adv { --acc: var(--adv); }
+  .seg { display: flex; gap: 8px; margin-bottom: 16px; }
+  .seg button, .btn { font-family: var(--font-mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; border-radius: 999px; padding: 11px 20px;
+    border: 1px solid var(--line); background: rgba(246,248,248,.04); color: #dde3e4; cursor: pointer; }
+  .seg button.on { border-color: #dde3e4; color: #f6f8f8; }
+  .bar { display: flex; gap: 14px; align-items: center; margin: 22px 0 18px; flex-wrap: wrap; }
+  .btn.go { background: var(--ours); color: #0a0d0d; border-color: var(--ours); padding: 14px 34px; box-shadow: 0 0 24px rgba(14,227,166,.25); }
+  .btn.go:active { background: #08b585; }
+  .status { border: 1px solid var(--line); border-radius: 14px; padding: 16px 20px; background: #0d1113; display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
+  .status .k { font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+  .status .s { font-size: 20px; color: #f6f8f8; font-variant-numeric: tabular-nums; }
+  .status .s i { font-style: normal; font-size: 11px; color: var(--dim); margin-left: 3px; }
+  .win { color: var(--ours) !important; } .loss { color: var(--adv) !important; }
+  .note { color: var(--dim); font-size: 13px; margin-top: 14px; }
+  @media (max-width: 900px) { .row { grid-template-columns: 1fr; } .status { grid-template-columns: repeat(3, 1fr); } }
+</style>
+</head>
+<body>
+<div class="eyebrow"><span class="sq"></span>General Galactic · Orbital table</div>
+<h1>Engagement control</h1>
+
+<div class="seg" id="scen">
+  <button data-s="defend_keepout">Defend</button>
+  <button data-s="pursue_evader">Pursue</button>
+</div>
+
+<div class="row">
+  <div class="card ours" id="card-ours"><h2><span class="dot" style="background:var(--ours)"></span>GG-1 · ours</h2></div>
+  <div class="card adv" id="card-adv"><h2><span class="dot" style="background:var(--adv)"></span>Adversary</h2></div>
+  <div class="card" id="card-eng"><h2><span class="dot" style="background:#dde3e4"></span>Engagement</h2></div>
+</div>
+
+<div class="bar">
+  <button class="btn go" id="start">Start the run</button>
+  <button class="btn" id="reset">Reset table</button>
+  <span class="note" id="conn">Connecting to the sim server…</span>
+</div>
+
+<div class="status">
+  <div><div class="k">Table</div><div class="s" id="st-phase">—</div></div>
+  <div><div class="k">Range</div><div class="s" id="st-range">—</div></div>
+  <div><div class="k">Time</div><div class="s" id="st-time">—</div></div>
+  <div><div class="k">Our delta-v</div><div class="s" id="st-dvo">—</div></div>
+  <div><div class="k">Their delta-v</div><div class="s" id="st-dva">—</div></div>
+  <div><div class="k">Result</div><div class="s" id="st-res">—</div></div>
+</div>
+<p class="note">Placement and zoom stay on the table: move the Seldon pieces, set the zoom by hand, then press Start. Changing anything after a run sends the table back to setup until the next Start.</p>
+
+<script>
+const API = `http://${location.hostname || 'localhost'}:8791`;
+// ranges = the Engagement Lab's own bounds; log scale where the Lab's values span decades
+const CRAFT = [
+  { id: 'thrust', label: 'Thrust', unit: 'N', min: .05, max: 50, log: true },
+  { id: 'fuel', label: 'Fuel', unit: 'kg', min: .5, max: 200, log: true },
+  { id: 'dry', label: 'Dry mass', unit: 'kg', min: 50, max: 2000, log: true },
+  { id: 'isp', label: 'Isp', unit: 's', min: 100, max: 400, log: false, step: 5 },
+];
+const ENGF = [
+  { id: 'time_s', label: 'Time', unit: 'min', min: 300, max: 12000, log: true, fmt: v => v >= 3600 ? [(v / 3600).toFixed(1), 'h'] : [Math.round(v / 60), 'min'] },
+  { id: 'ring_km', label: 'Zone', unit: 'km', min: .02, max: 2, log: true },
+  { id: 'speed', label: 'Playback', unit: '×', min: .25, max: 4, log: true },
+];
+const RING_DEF = { defend_keepout: .25, pursue_evader: .15 };
+const toT = (f, v) => f.log ? Math.log(v / f.min) / Math.log(f.max / f.min) : (v - f.min) / (f.max - f.min);
+const toV = (f, t) => { const v = f.log ? f.min * Math.pow(f.max / f.min, t) : f.min + t * (f.max - f.min); return f.step ? Math.round(v / f.step) * f.step : +v.toPrecision(2); };
+const fmt = v => v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v >= .1 ? v.toFixed(2) : v.toFixed(3);
+let state = null;
+const inputs = {};
+
+function field(parent, key, f) {
+  const d = document.createElement('div'); d.className = 'f';
+  d.innerHTML = `<label><span>${f.label}</span><span class="v"></span></label><input type="range" min="0" max="1000" step="1">`;
+  parent.appendChild(d);
+  const r = d.querySelector('input'), out = d.querySelector('.v');
+  const show = v => { const [a, u] = f.fmt ? f.fmt(v) : [fmt(v), f.unit]; out.innerHTML = `${a}<i>${u}</i>`; };
+  r.addEventListener('input', () => { const v = toV(f, r.value / 1000); show(v); send(key, f.id, v); });
+  inputs[key + '.' + f.id] = { set: v => { r.value = Math.round(toT(f, v) * 1000); show(v); } };
+}
+CRAFT.forEach(f => field(document.getElementById('card-ours'), 'ours', f));
+CRAFT.forEach(f => field(document.getElementById('card-adv'), 'adv', f));
+ENGF.forEach(f => field(document.getElementById('card-eng'), 'eng', f));
+
+let pend = {}, timer = null;
+function send(group, id, v) {
+  if (group === 'eng') pend[id] = v; else (pend[group] = pend[group] || {})[id] = v;
+  clearTimeout(timer); timer = setTimeout(() => post(pend).then(() => { pend = {}; }), 120);
+}
+const post = body => fetch(API + '/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
+
+function load(c) {
+  state = c;
+  for (const g of ['ours', 'adv']) CRAFT.forEach(f => inputs[g + '.' + f.id].set(c[g][f.id]));
+  inputs['eng.time_s'].set(c.time_s); inputs['eng.speed'].set(c.speed);
+  inputs['eng.ring_km'].set(c.ring_km ?? RING_DEF[c.scenario] ?? .25);
+  document.querySelectorAll('#scen button').forEach(b => b.classList.toggle('on', b.dataset.s === c.scenario));
+  document.querySelectorAll('#card-eng .f label span:first-child')[1].textContent = c.scenario.startsWith('pursue') ? 'Capture zone' : 'Keepout zone';
+}
+document.querySelectorAll('#scen button').forEach(b => b.addEventListener('click', () => post({ scenario: b.dataset.s, ring_km: null }).then(load)));
+document.getElementById('start').addEventListener('click', () => post({ ...pend, start: true }).then(c => { pend = {}; status(c.status); }));
+document.getElementById('reset').addEventListener('click', () => post({ reset: true }));
+
+const $ = id => document.getElementById(id);
+function status(s) {
+  const fresh = s && s.at && Date.now() / 1000 - s.at < 3;
+  $('st-phase').textContent = !fresh ? 'not open' : { ready: 'ready', simulating: 'simulating…', playing: 'playing', result: 'result', offline: 'server offline' }[s.phase] || s.phase || '—';
+  $('st-range').innerHTML = fresh && s.range_km != null ? (s.range_km < 1 ? `${Math.round(s.range_km * 1000)}<i>m</i>` : `${s.range_km.toFixed(2)}<i>km</i>`) : fresh && s.opening_km != null ? `${s.opening_km.toFixed(2)}<i>km apart</i>` : '—';
+  $('st-time').innerHTML = fresh && s.t != null ? `${s.t}<i>/ ${s.t_end} s</i>` : '—';
+  $('st-dvo').innerHTML = fresh && s.ours ? `${s.ours.used.toFixed(1)}<i>m/s · ${Math.round(s.ours.frac * 100)}% fuel</i>` : '—';
+  $('st-dva').innerHTML = fresh && s.adv ? `${s.adv.used.toFixed(1)}<i>m/s · ${Math.round(s.adv.frac * 100)}% fuel</i>` : '—';
+  const r = $('st-res'); r.textContent = fresh && s.final ? s.verdict : '—'; r.className = 's ' + (fresh && s.final ? (s.verdict === 'WIN' ? 'win' : s.verdict === 'LOSS' ? 'loss' : '') : '');
+}
+async function poll() {
+  try {
+    const c = await (await fetch(API + '/control')).json();
+    if (!state) load(c); else if (c.scenario !== state.scenario) load(c);
+    state = c; status(c.status);
+    $('conn').textContent = 'Connected to the sim server.';
+  } catch (e) { $('conn').textContent = 'Sim server offline: run tools/engage.sh on this machine.'; }
+  setTimeout(poll, 400);
+}
+poll();
+addEventListener('keydown', e => { if (e.key === 'Enter') $('start').click(); });
+</script>
+</body>
+</html>

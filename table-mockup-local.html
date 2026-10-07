@@ -1,0 +1,967 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Cislunar Ops Table</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Michroma&display=swap">
+<style>
+:root{
+  /* Layout: full-bleed WebGL stage; spec plate top-left, configurator panel right (bottom sheet on phones) */
+  --void:#07090c; --plate:rgba(12,16,21,.86); --edge:#2b3641; --text:#dbe4ec; --muted:#8593a1; --led:#4fd8ff;
+  --f-display:"Michroma","Eurostile","Arial Narrow",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{margin:0;background:var(--void);color:var(--text);font:12.5px/1.45 var(--f-mono);overflow:hidden}
+#stage{position:fixed;inset:0}
+#stage canvas{display:block;width:100%;height:100%;touch-action:none}
+.cut{clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,12px 100%,0 calc(100% - 12px))}
+.plate{position:fixed;left:16px;top:calc(14px + env(safe-area-inset-top,0px));background:var(--plate);border:1px solid var(--edge);
+  padding:10px 14px;max-width:min(360px,calc(100% - 32px));backdrop-filter:blur(6px)}
+.eyebrow{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--led)}
+h1{font:400 15px/1.3 var(--f-display);letter-spacing:.06em;margin:4px 0 6px;text-transform:uppercase}
+.spec{color:var(--muted);font-size:11px}
+.spec b{color:var(--text);font-weight:500}
+
+#panel{position:fixed;right:16px;top:calc(14px + env(safe-area-inset-top,0px));bottom:calc(14px + env(safe-area-inset-bottom,0px));
+  width:330px;display:flex;flex-direction:column;background:var(--plate);border:1px solid var(--edge);backdrop-filter:blur(8px)}
+.dock{display:flex;flex-wrap:wrap;gap:4px;padding:10px;border-bottom:1px solid var(--edge)}
+.opts{overflow-y:auto;padding:4px 12px 12px;display:grid;gap:12px;overscroll-behavior:contain}
+.sec{font:400 12px var(--f-display);letter-spacing:.1em;text-transform:uppercase;color:var(--led);margin:14px 0 -6px;padding-top:10px;border-top:1px solid var(--edge)}
+.sec:first-of-type{border-top:0}
+.grp h2{font:500 10px var(--f-mono);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:10px 0 6px}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+button{font:500 11px var(--f-mono);letter-spacing:.04em;color:var(--text);background:rgba(255,255,255,.03);
+  border:1px solid var(--edge);padding:7px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;
+  clip-path:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px)}
+button:hover{border-color:#44525f}
+button:focus-visible{outline:none;border-color:var(--led);box-shadow:inset 0 0 0 1px var(--led)}
+button[aria-pressed="true"]{border-color:var(--led);color:#fff;background:rgba(79,216,255,.08)}
+.chips button[aria-pressed="true"]{background:color-mix(in srgb,var(--led) 12%,transparent)}
+button.primary{border-color:var(--led);color:var(--led);text-transform:uppercase}
+button:disabled{opacity:.6;cursor:progress}
+.sw{width:12px;height:12px;border-radius:50%;border:1px solid rgba(255,255,255,.25);flex:none}
+.cost{color:var(--muted);font-size:10px}
+.impact{border-top:1px solid var(--edge);padding:10px 12px;display:grid;gap:4px;font-size:11px}
+.impact .row{display:flex;justify-content:space-between;gap:8px;color:var(--muted)}
+.impact .row b{color:var(--text);font-weight:500;font-variant-numeric:tabular-nums}
+.impact .tot{color:var(--text);font-weight:500}
+#more{display:none}
+#toast{position:fixed;left:16px;right:16px;top:50%;margin:auto;max-width:420px;background:var(--plate);border:1px solid var(--led);padding:10px 14px}
+#status{position:fixed;inset:0;display:grid;place-items:center;color:var(--muted);padding:0 16px;text-align:center}
+
+@media (max-width:760px){
+  .plate{padding:8px 12px}
+  .plate .spec .long{display:none}
+  #panel{left:16px;right:16px;top:auto;width:auto;max-height:58%}
+  #panel.collapsed .opts,#panel.collapsed .impact{display:none}
+  #more{display:inline-flex}
+}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+</style>
+
+<div id="stage" aria-label="3D model of the ops table"></div>
+<div id="status">Loading 3D scene…</div>
+
+<header class="plate cut">
+  <div class="eyebrow">Current frame + shell options</div>
+  <h1>Cislunar Ops Table</h1>
+  <div class="spec"><b>65″ Insignia QF</b> face-up on a <b>Uline H-5785S</b> 60 × 36</div>
+  <div class="spec">⅜″ glass top at <b id="glassH"></b> <span class="long">· assumes a 36″ table</span></div>
+</header>
+
+<aside id="panel" class="cut collapsed" aria-label="Configure the table">
+  <div class="dock" role="group" aria-label="View">
+    <button data-view="overview" aria-pressed="true">Overview</button>
+    <button data-view="stand">Standing</button>
+    <button data-view="top">Top</button>
+    <button data-view="edge">Edge</button>
+    <button id="rot" aria-pressed="true">Rotate</button>
+    <button id="ar" class="primary">View in AR</button>
+    <button id="more" aria-expanded="false" aria-controls="opts">Customize ▴</button>
+  </div>
+  <div class="opts" id="opts"></div>
+  <div class="impact" id="impact"></div>
+</aside>
+<div id="toast" role="status" hidden></div>
+
+<script>
+setTimeout(function(){var s=document.getElementById('status');if(s&&!s.hidden)s.textContent="The 3D scene didn't load. It needs WebGL and access to cdn.jsdelivr.net.";},12000);
+</script>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+
+// ---- Locked dimensions (inches → meters) ----
+const IN = 0.0254;
+const TT = 36;                       // tabletop surface (assumed Uline height)
+const TOP_W = 60.25, TOP_D = 36.25;  // table top incl. lip
+const LIP = 1.5, SHEET = 0.105;      // 12-ga top, 1½″ lip
+const SHELF = { w: 58.75, d: 21, y: TT - 20.625 };
+const TV = { w: 57, d: 32.8, bottom: TT + 0.9, face: TT + 3.875 };
+const PIC = { w: 56.2, d: 31.6 };
+const GLASS = { w: 60, d: 36, t: 0.375, bottom: TT + 4.125 };
+const WALL = { t: 0.09, bottom: TT - 1.75, top: TT + 4.625 };
+document.getElementById('glassH').textContent = `${TT + 4.5}″`.replace('.5″', '½″');
+
+// ---- Options ----
+const FRAME = [
+  { id: 'gunmetal', name: 'Gunmetal paint', sw: '#44494f', c: 0x3f444a, m: .55, r: .42, cost: 0 },
+  { id: 'blackpc',  name: 'Matte black powder coat', sw: '#17181a', c: 0x151618, m: .05, r: .72, cost: 150 },
+  { id: 'glossblk', name: 'Gloss black powder coat', sw: '#0b0c0e', c: 0x0a0b0d, m: 0, r: .12, cc: 1, cost: 150 },
+  { id: 'brushed',  name: 'Brushed aluminum', sw: '#c9ccd0', c: 0xcfd2d6, m: 1, r: .3, brush: true, cost: 0 },
+  { id: 'clearano', name: 'Clear anodized', sw: '#a9adb2', c: 0xb3b7bc, m: 1, r: .45, brush: true, cost: 250 },
+  { id: 'bronze',   name: 'Bronze anodized', sw: '#5c4834', c: 0x5e4a36, m: 1, r: .4, brush: true, cost: 300 },
+  { id: 'olive',    name: 'Olive drab paint', sw: '#4b5036', c: 0x4a4f35, m: .05, r: .7, cost: 0 },
+  { id: 'white',    name: 'Gloss white powder coat', sw: '#e9eaec', c: 0xe6e7e9, m: 0, r: .2, cc: 1, cost: 150 },
+];
+const GLASSES = [
+  { id: 'clear',   name: 'Clear tempered', sw: '#bfe3d6', tint: 0xe4f5ee, edge: 0x5da88c, r: .03, cost: 0 },
+  { id: 'lowiron', name: 'Low-iron (ultra clear)', sw: '#e6f3f6', tint: 0xf4fbfc, edge: 0xb9dde4, r: .03, cost: 150 },
+  { id: 'ag',      name: 'Anti-glare etched', sw: '#d7e2e0', tint: 0xe9f1ef, edge: 0x7fb5a2, r: .32, cost: 300 },
+];
+const BORDER = [
+  { id: 'black',    name: 'Black', sw: '#0b0c0d', c: '#0b0c0d', cost: 0 },
+  { id: 'charcoal', name: 'Charcoal', sw: '#2c2f33', c: '#2b2e32', cost: 0 },
+  { id: 'navy',     name: 'Deep navy', sw: '#0f1a2a', c: '#0e1828', cost: 0 },
+];
+const MARKS = [
+  { id: 'plain',  name: 'Plain', cost: 0 },
+  { id: 'ticks',  name: 'Range ticks', cost: 60 },
+  { id: 'call',   name: 'Callsign', cost: 60 },
+  { id: 'hazard', name: 'Hazard corners', cost: 60 },
+];
+const ACCENT = [
+  { id: 'cyan',  name: 'Cyan', sw: '#4fd8ff', hex: 0x4fd8ff },
+  { id: 'red',   name: 'Red', sw: '#ff3b30', hex: 0xff3b30 },
+  { id: 'amber', name: 'Amber', sw: '#ffb13b', hex: 0xffb13b },
+  { id: 'white', name: 'White', sw: '#e8f0ff', hex: 0xe8f0ff },
+];
+const SCREEN = [{ id: 'map', name: 'Cislunar map' }, { id: 'standby', name: 'Standby' }, { id: 'off', name: 'Off' }];
+const ONOFF = cost => [{ id: 'off', name: 'Off', cost: 0 }, { id: 'on', name: 'On', cost }];
+const ROOM = [{ id: 'dark', name: 'Briefing room' }, { id: 'studio', name: 'Studio' }];
+
+// Materials for the shell (deck + body) built around the locked frame
+const FIN = {
+  walnut:   { name: 'Walnut', sw: '#5b3b25', wood: ['#5b3b25', '#34200f', '#74492a'], r: .42, cc: .35 },
+  oak:      { name: 'White oak', sw: '#bb915f', wood: ['#bb915f', '#8a6440', '#d1a879'], r: .5, cc: .25 },
+  ebony:    { name: 'Ebonized oak', sw: '#24201d', wood: ['#26211e', '#0f0d0c', '#3a332d'], r: .42, cc: .3 },
+  birch:    { name: 'Baltic birch', sw: '#dcc59b', wood: ['#dcc59b', '#bb9f6d', '#ecdcb8'], r: .55, cc: .15 },
+  carbon:   { name: 'Carbon fiber', sw: '#1b1c1f', tex: 'carbon', c: 0xffffff, m: .3, r: .28, cc: 1 },
+  leather:  { name: 'Black leather', sw: '#1e1a18', tex: 'leather', c: 0xffffff, m: 0, r: .62, cc: .1 },
+  gunmetal: { name: 'Gunmetal', sw: '#44494f', c: 0x3f444a, m: .55, r: .42 },
+  black:    { name: 'Matte black', sw: '#17181a', c: 0x151618, m: .05, r: .72 },
+  white:    { name: 'Gloss white', sw: '#e9eaec', c: 0xe6e7e9, m: 0, r: .2, cc: 1 },
+  olive:    { name: 'Olive drab', sw: '#4b5036', c: 0x4a4f35, m: .05, r: .7 },
+  brushed:  { name: 'Brushed aluminum', sw: '#c9ccd0', c: 0xcfd2d6, m: 1, r: .3, brush: true },
+};
+const DECK_COST = { walnut: 450, oak: 400, ebony: 420, birch: 200, carbon: 900, leather: 350, gunmetal: 250, brushed: 250 };
+const finItems = (ids, costs = {}) => ids.map(id => ({ id, ...FIN[id], cost: costs[id] || 0 }));
+const DECK = finItems(['walnut', 'oak', 'ebony', 'birch', 'carbon', 'leather', 'gunmetal', 'brushed'], DECK_COST);
+const BODY = finItems(['gunmetal', 'black', 'white', 'olive', 'walnut', 'ebony', 'birch', 'brushed', 'carbon']);
+const TRIM = [
+  { id: 'blackchrome', name: 'Black chrome', sw: '#1c1d20', c: 0x1c1d20, m: 1, r: .15 },
+  { id: 'brass', name: 'Brass', sw: '#b08d57', c: 0xb08d57, m: 1, r: .28 },
+  { id: 'copper', name: 'Copper', sw: '#b06a45', c: 0xb06a45, m: 1, r: .3 },
+  { id: 'alu', name: 'Aluminum', sw: '#c9ccd0', c: 0xc4c8cc, m: 1, r: .3 },
+];
+const SHAPE = [
+  { id: 'wedge', name: 'Wedge', cost: 600 },
+  { id: 'hourglass', name: 'Hourglass', cost: 750 },
+  { id: 'floating', name: 'Floating deck', cost: 450 },
+  { id: 'open', name: 'Open legs', cost: 0 },
+];
+const REACH = [{ id: '0', name: 'None (frame only)' }, { id: '3', name: '3″' }, { id: '6', name: '6″' }, { id: '10', name: '10″' }];
+const EDGE = [{ id: 'flat', name: 'Square' }, { id: 'chamfer', name: 'Chamfered' }, { id: 'slope', name: 'Sloped console' }, { id: 'ridge', name: 'Raised bezel' }];
+const CORNER = [{ id: 'square', name: 'Square' }, { id: 'chamfer', name: 'Chamfered' }, { id: 'facet', name: 'Faceted' }];
+const DETAIL = [{ id: 'plain', name: 'Plain' }, { id: 'greebles', name: 'Greebles', cost: 150 }, { id: 'slats', name: 'Vertical slats', cost: 200 }, { id: 'inlay', name: 'Inlay band', cost: 80 }];
+const BASE = [{ id: 'casters', name: 'Casters showing' }, { id: 'plinth', name: 'Plinth to floor', cost: 80 }];
+const LIGHTS = [{ id: 'off', name: 'Off' }, { id: 'halo', name: 'Halo around glass', cost: 60 }, { id: 'under', name: 'Under the deck', cost: 60 }, { id: 'all', name: 'All', cost: 160 }];
+const TABLE = [
+  { id: 'gray',  name: 'Factory gray', sw: '#8a9096', c: 0x858b91, m: .15, r: .6 },
+  { id: 'black', name: 'Black', sw: '#1a1b1d', c: 0x1a1b1d, m: .05, r: .7, cost: 250 },
+  { id: 'match', name: 'Match body', cost: 250 },
+];
+
+const SHOWN = {
+  shape: ['wedge', 'hourglass', 'floating', 'open'],
+  reach: ['0', '6', '10'],
+  edge: ['flat', 'chamfer', 'slope'],
+  corners: ['square', 'facet'],
+  deck: ['walnut', 'oak', 'ebony', 'carbon', 'gunmetal'],
+  body: ['gunmetal', 'black', 'white', 'walnut'],
+  detail: ['plain', 'greebles', 'slats'],
+  lights: ['off', 'halo', 'all'],
+  accent: ['cyan', 'red', 'amber'],
+};
+const GROUPS = [
+  { sec: 'Shape', key: 'shape', label: 'Body', items: SHAPE },
+  { sec: 'Shape', key: 'reach', label: 'Deck reach past the table', items: REACH },
+  { sec: 'Shape', key: 'edge', label: 'Deck edge', items: EDGE },
+  { sec: 'Shape', key: 'corners', label: 'Corners', items: CORNER },
+  { sec: 'Shape', key: 'base', label: 'Base', items: BASE },
+  { sec: 'Materials', key: 'deck', label: 'Deck (around the glass)', items: DECK },
+  { sec: 'Materials', key: 'body', label: 'Body', items: BODY },
+  { sec: 'Materials', key: 'trim', label: 'Trim & hardware', items: TRIM },
+  { sec: 'Materials', key: 'table', label: 'Table legs (open body only)', items: TABLE },
+  { sec: 'Details', key: 'detail', label: 'Body detail', items: DETAIL },
+  { sec: 'Details', key: 'lights', label: 'Light lines', items: LIGHTS },
+  { sec: 'Details', key: 'accent', label: 'Accent color', items: ACCENT },
+  { sec: 'Glass & screen', key: 'glass', label: 'Glass', items: GLASSES },
+  { sec: 'Glass & screen', key: 'border', label: 'Border paint', items: BORDER },
+  { sec: 'Glass & screen', key: 'marks', label: 'Border graphics', items: MARKS },
+  { sec: 'Glass & screen', key: 'screen', label: 'Screen', items: SCREEN },
+  { sec: 'Extras', key: 'props', label: 'Earth & Moon props', items: ONOFF(30) },
+  { sec: 'Extras', key: 'stand', label: 'Tablet kiosk stand', items: ONOFF(120) },
+  { sec: 'Extras', key: 'vents', label: 'Vent slots (only if the heat test needs them)', items: ONOFF(0) },
+  { sec: 'Extras', key: 'room', label: 'Room', items: ROOM },
+];
+const PRESETS_ALL = [
+  { name: 'Current frame', cfg: { shape: 'open', reach: '0', edge: 'flat', corners: 'square', base: 'casters', deck: 'gunmetal', body: 'gunmetal', trim: 'alu', detail: 'plain', lights: 'off', accent: 'cyan', marks: 'plain', table: 'gray' } },
+  { name: 'Command Deck', cfg: { shape: 'wedge', reach: '6', edge: 'chamfer', corners: 'facet', base: 'plinth', deck: 'gunmetal', body: 'gunmetal', trim: 'blackchrome', detail: 'greebles', lights: 'all', accent: 'cyan', marks: 'ticks' } },
+  { name: "Captain's Table", cfg: { shape: 'floating', reach: '6', edge: 'flat', corners: 'square', base: 'plinth', deck: 'walnut', body: 'black', trim: 'brass', detail: 'slats', lights: 'halo', accent: 'amber', marks: 'call' } },
+  { name: 'Imperial', cfg: { shape: 'hourglass', reach: '10', edge: 'slope', corners: 'facet', base: 'plinth', deck: 'carbon', body: 'white', trim: 'blackchrome', detail: 'plain', lights: 'all', accent: 'red', marks: 'call' } },
+  { name: 'Rebel Workshop', cfg: { shape: 'wedge', reach: '6', edge: 'flat', corners: 'facet', base: 'casters', deck: 'birch', body: 'olive', trim: 'alu', detail: 'greebles', lights: 'halo', accent: 'amber', marks: 'hazard' } },
+  { name: 'Research Lab', cfg: { shape: 'open', reach: '3', edge: 'chamfer', corners: 'square', base: 'casters', deck: 'oak', body: 'white', trim: 'alu', detail: 'plain', lights: 'off', accent: 'white', marks: 'plain', table: 'gray' } },
+];
+const PRESETS = PRESETS_ALL.filter(p => !['Rebel Workshop', 'Research Lab'].includes(p.name));
+const DEFAULT = { ...PRESETS[0].cfg, glass: 'clear', border: 'black', screen: 'map', vents: 'off', props: 'on', stand: 'on', room: 'dark' };
+const KEY = 'ops-table-config-v5';
+let cfg = { ...DEFAULT };
+try { Object.assign(cfg, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) {}
+const pick = (key, id) => GROUPS.find(g => g.key === key).items.find(i => i.id === id) || GROUPS.find(g => g.key === key).items[0];
+const UI_GROUPS = GROUPS.filter(g => SHOWN[g.key]).map(g => ({ ...g, items: g.items.filter(i => SHOWN[g.key].includes(i.id)) }));
+
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const rgba = (h, a) => `rgba(${h >> 16 & 255},${h >> 8 & 255},${h & 255},${a})`;
+const css = h => '#' + h.toString(16).padStart(6, '0');
+
+// ---- Renderer / scene ----
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+
+const portrait = () => innerWidth / innerHeight < 0.8;
+const camera = new THREE.PerspectiveCamera(portrait() ? 58 : 36, innerWidth / innerHeight, 0.02, 60);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.minDistance = 0.25;
+controls.maxDistance = 7;
+controls.maxPolarAngle = 1.54;
+controls.autoRotateSpeed = 0.5;
+
+// ---- Helpers ----
+const table = new THREE.Group(); // everything exported to AR
+scene.add(table);
+function add(geo, m, x = 0, y = 0, z = 0, parent = table) {
+  const me = new THREE.Mesh(geo, m); me.position.set(x, y, z); parent.add(me); return me;
+}
+// box from inch dims, positioned by center (x,z) and bottom y
+const ibox = (w, h, d, m, x, yb, z, p) => add(new THREE.BoxGeometry(w * IN, h * IN, d * IN), m, x * IN, (yb + h / 2) * IN, z * IN, p);
+function canvasTex(w, h) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  return [c, t];
+}
+function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+// Brushed-metal streak texture (u runs along each wall)
+const brushTex = (() => {
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 256;
+  const g = c.getContext('2d'), r = rng(11);
+  g.fillStyle = '#e6e6e6'; g.fillRect(0, 0, 1024, 256);
+  for (let i = 0; i < 1400; i++) {
+    const v = 200 + r() * 55 | 0; g.strokeStyle = `rgba(${v},${v},${v},${.25 + r() * .35})`;
+    const y = r() * 256, x = r() * 1024; g.lineWidth = .6 + r();
+    g.beginPath(); g.moveTo(x - 400, y); g.lineTo(x + 400, y); g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2, 2); return t;
+})();
+
+// ---- Materials ----
+const phys = o => new THREE.MeshPhysicalMaterial(o);
+const std = o => new THREE.MeshStandardMaterial(o);
+// Perforated-sheet texture: dark round holes on a light base (tinted by the panel color)
+const perfTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 128, 128); g.fillStyle = '#050505';
+  for (const [x, y] of [[32, 32], [96, 32], [0, 96], [64, 96], [128, 96]]) { g.beginPath(); g.arc(x, y, 17, 0, 7); g.fill(); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; return t;
+})();
+// Procedural wood grain (u along the length, 1024 px = 48″; v 256 px = 12″)
+const woodCache = {};
+function woodTex(f) {
+  if (woodCache[f.name]) return woodCache[f.name];
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 256;
+  const g = c.getContext('2d'), rr = rng(f.name.length * 97 + 5), [base, dark, light] = f.wood;
+  g.fillStyle = base; g.fillRect(0, 0, 1024, 256);
+  for (let i = 0; i < 16; i++) { g.fillStyle = (i % 2 ? dark : light) + '22'; g.fillRect(0, rr() * 256, 1024, 6 + rr() * 22); }
+  for (let i = 0; i < 150; i++) {
+    const y0 = rr() * 256, amp = 1 + rr() * 5, fr = .002 + rr() * .006, ph = rr() * 6;
+    g.strokeStyle = (rr() < .7 ? dark : light) + (rr() < .5 ? '55' : '99'); g.lineWidth = .4 + rr() * 1.6;
+    g.beginPath();
+    for (let x = 0; x <= 1024; x += 16) { const y = y0 + amp * Math.sin(x * fr + ph) + amp * .4 * Math.sin(x * fr * 3.1 + ph); x ? g.lineTo(x, y) : g.moveTo(x, y); }
+    g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+  return woodCache[f.name] = t;
+}
+const carbonTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+    const h = ((x + y) >> 1) % 2 === 0, gr = h ? g.createLinearGradient(x * 16, 0, x * 16 + 16, 0) : g.createLinearGradient(0, y * 16, 0, y * 16 + 16);
+    gr.addColorStop(0, '#141518'); gr.addColorStop(.5, '#34363b'); gr.addColorStop(1, '#141518');
+    g.fillStyle = gr; g.fillRect(x * 16, y * 16, 16, 16);
+  }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(24, 6); t.anisotropy = 8; return t;
+})();
+const leatherTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d'), rr = rng(21);
+  g.fillStyle = '#1f1a17'; g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 5000; i++) { const v = rr(); g.fillStyle = v < .5 ? 'rgba(0,0,0,.25)' : 'rgba(90,70,60,.12)'; g.fillRect(rr() * 256, rr() * 256, 1 + rr() * 2, 1 + rr() * 2); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(8, 2); return t;
+})();
+const mat = {
+  frame: phys({ color: 0x3f444a, metalness: .55, roughness: .42, side: THREE.DoubleSide }),
+  deck: phys({ color: 0x3f444a, metalness: .55, roughness: .42, side: THREE.DoubleSide }),
+  amber: std({ color: 0x000000, emissive: 0xffb13b, emissiveIntensity: 2 }),
+  red: std({ color: 0x000000, emissive: 0xff3b30, emissiveIntensity: 2 }),
+  steel: phys({ color: 0x1a1b1d, metalness: .05, roughness: .7 }),
+  zinc: std({ color: 0xb8bcc0, metalness: 1, roughness: .35 }),
+  alu: std({ color: 0xc4c8cc, metalness: 1, roughness: .38 }),
+  tv: std({ color: 0x121416, metalness: .2, roughness: .55 }),
+  bezel: std({ color: 0x050607, metalness: .1, roughness: .3 }),
+  rubber: std({ color: 0x1b1c1e, metalness: 0, roughness: .9 }),
+  wheel: std({ color: 0x3a3d40, metalness: 0, roughness: .6 }),
+  pc: std({ color: 0x0f1012, metalness: .3, roughness: .45 }),
+  slot: std({ color: 0x020203, metalness: 0, roughness: 1 }),
+  panel: phys({ color: 0x151618, metalness: .05, roughness: .72 }),
+  perf: phys({ color: 0x151618, metalness: .05, roughness: .72 }),
+  pad: phys({ color: 0x141416, metalness: 0, roughness: .5, clearcoat: .4, clearcoatRoughness: .5, side: THREE.DoubleSide }),
+  trim: phys({ color: 0x2a2d31, metalness: .85, roughness: .32, side: THREE.DoubleSide }),
+  led: std({ color: 0x000000, emissive: 0x4fd8ff, emissiveIntensity: 2.2, side: THREE.DoubleSide }),
+  glassTop: phys({ color: 0xe4f5ee, metalness: 0, roughness: .03, transparent: true, opacity: .1, depthWrite: false, envMapIntensity: 1.4 }),
+  glassBot: phys({ color: 0xe4f5ee, metalness: 0, roughness: .03, transparent: true, opacity: .05, depthWrite: false }),
+  glassEdge: phys({ color: 0x5da88c, metalness: 0, roughness: .1, transparent: true, opacity: .85 }),
+};
+
+// ---- Screen texture (65″ picture area, true Earth–Moon scale) ----
+const SCR_W = PIC.w * IN, SCR_D = PIC.d * IN;
+const EARTH = { x: -.40, z: .07 }, MOON = { x: .47, z: -.07 };
+const SCALE = 384400e3 / Math.hypot(MOON.x - EARTH.x, MOON.z - EARTH.z);
+const [sc, screenTex] = canvasTex(2048, 1152);
+const pxy = (x, z) => [(x / SCR_W + .5) * 2048, (z / SCR_D + .5) * 1152];
+function glow(g, x, y, r, c, a) {
+  const gr = g.createRadialGradient(x, y, 0, x, y, r);
+  gr.addColorStop(0, rgba(c, a)); gr.addColorStop(1, rgba(c, 0));
+  g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+}
+function tri(g, x, y, s, c) {
+  g.beginPath(); g.moveTo(x, y - s); g.lineTo(x + s * .87, y + s * .5); g.lineTo(x - s * .87, y + s * .5); g.closePath();
+  g.fillStyle = rgba(c, .25); g.fill(); g.strokeStyle = css(c); g.lineWidth = 3; g.stroke();
+}
+function dia(g, x, y, s, c, fill = .25) {
+  g.beginPath(); g.moveTo(x, y - s); g.lineTo(x + s, y); g.lineTo(x, y + s); g.lineTo(x - s, y); g.closePath();
+  g.fillStyle = rgba(c, fill); g.fill(); g.strokeStyle = css(c); g.lineWidth = 3; g.stroke();
+}
+function gridBg(g, acc, W, H) {
+  const bg = g.createRadialGradient(W * .4, H * .5, 80, W * .5, H * .5, W * .75);
+  bg.addColorStop(0, '#0a1a22'); bg.addColorStop(1, '#010306');
+  g.fillStyle = bg; g.fillRect(0, 0, W, H); g.lineWidth = 1;
+  for (let x = 0; x <= W; x += 32) { g.strokeStyle = rgba(acc, x % 256 ? .05 : .15); g.beginPath(); g.moveTo(x + .5, 0); g.lineTo(x + .5, H); g.stroke(); }
+  for (let y = 0; y <= H; y += 32) { g.strokeStyle = rgba(acc, y % 256 ? .05 : .15); g.beginPath(); g.moveTo(0, y + .5); g.lineTo(W, y + .5); g.stroke(); }
+}
+function drawScreen(acc, mode) {
+  const g = sc.getContext('2d'), W = 2048, H = 1152;
+  g.textAlign = 'left';
+  if (mode === 'off') { g.fillStyle = '#000'; g.fillRect(0, 0, W, H); screenTex.needsUpdate = true; return; }
+  gridBg(g, acc, W, H);
+  if (mode === 'standby') {
+    glow(g, W / 2, H / 2, 420, acc, .25);
+    g.strokeStyle = rgba(acc, .8); g.lineWidth = 4; g.beginPath(); g.arc(W / 2, H / 2 - 40, 150, 0, 7); g.stroke();
+    g.lineWidth = 2; g.setLineDash([6, 10]); g.beginPath(); g.ellipse(W / 2, H / 2 - 40, 260, 90, -.3, 0, 7); g.stroke(); g.setLineDash([]);
+    g.fillStyle = css(acc); g.beginPath(); g.arc(W / 2 + 240, H / 2 - 128, 16, 0, 7); g.fill();
+    g.textAlign = 'center'; g.font = '400 58px Michroma, sans-serif'; g.fillText('CISLUNAR OPS', W / 2, H / 2 + 220);
+    g.fillStyle = rgba(acc, .7); g.font = '26px "JetBrains Mono", monospace'; g.fillText('STANDBY · AWAITING SCENARIO', W / 2, H / 2 + 272);
+    screenTex.needsUpdate = true; return;
+  }
+  const hostile = acc === 0xff3b30 ? 0xffd24a : 0xff4d4d;
+  const [ex, ey] = pxy(EARTH.x, EARTH.z), [mx, my] = pxy(MOON.x, MOON.z);
+  const R = Math.hypot(mx - ex, my - ey), ux = (mx - ex) / R, uy = (my - ey) / R;
+  const k = 2048 / SCR_W / SCALE;
+  g.setLineDash([2, 12]); g.strokeStyle = rgba(acc, .3); g.lineWidth = 2;
+  g.font = '18px "JetBrains Mono", monospace'; g.fillStyle = rgba(acc, .5);
+  for (const km of [100e3, 200e3, 300e3]) {
+    const r = km * 1e3 * k; g.beginPath(); g.arc(ex, ey, r, 0, 7); g.stroke();
+    g.fillText(`${km / 1e3}k km`, ex + r * .7 + 8, ey + r * .7);
+  }
+  g.setLineDash([]); g.strokeStyle = rgba(acc, .55); g.lineWidth = 3;
+  g.beginPath(); g.arc(ex, ey, R, 0, 7); g.stroke();
+  const geo = 42164e3 * k;
+  g.setLineDash([10, 8]); g.strokeStyle = rgba(acc, .9); g.lineWidth = 2;
+  g.beginPath(); g.arc(ex, ey, geo, 0, 7); g.stroke(); g.setLineDash([]);
+  glow(g, ex, ey, 150, acc, .5); glow(g, mx, my, 60, acc, .4);
+  const L = [['L1', .849], ['L2', 1.168]].map(([n, f]) => [n, ex + ux * R * f, ey + uy * R * f]);
+  g.font = '22px "JetBrains Mono", monospace';
+  for (const [n, x, y] of L) { dia(g, x, y, 12, acc, 0); g.fillStyle = css(acc); g.fillText(n, x + 18, y - 14); }
+  const a0 = Math.atan2(uy, ux) - .9, sx = ex + geo * Math.cos(a0), sy = ey + geo * Math.sin(a0);
+  const [, l1x, l1y] = L[0], cx = (sx + l1x) / 2 + uy * 240, cy = (sy + l1y) / 2 - ux * 240;
+  g.setLineDash([18, 10]); g.strokeStyle = css(acc); g.lineWidth = 3;
+  g.beginPath(); g.moveTo(sx, sy); g.quadraticCurveTo(cx, cy, l1x - ux * 20, l1y - uy * 20); g.stroke(); g.setLineDash([]);
+  for (const a of [.5, 2.2, 3.9]) tri(g, ex + geo * Math.cos(a), ey + geo * Math.sin(a), 16, acc);
+  tri(g, sx, sy, 18, acc); tri(g, L[0][1] - 40, L[0][2] + 50, 18, acc);
+  dia(g, Math.min(L[1][1] + 10, W - 120), L[1][2] + 60, 16, hostile);
+  dia(g, mx + 70, my + 70, 16, hostile);
+  dia(g, ex + R * Math.cos(-.55), ey + R * Math.sin(-.55), 16, hostile);
+  g.fillStyle = css(acc); g.font = '20px "JetBrains Mono", monospace';
+  g.fillText('BLU-1', sx + 24, sy + 6); g.fillText('BLU-3', L[0][1] - 20, L[0][2] + 90);
+  g.fillStyle = css(hostile); g.fillText('RED-2', Math.min(L[1][1] + 32, W - 100), L[1][2] + 66);
+  g.fillStyle = rgba(acc, .85); g.fillText('GEO', ex + geo * .72 + 12, ey - geo * .72);
+  g.fillText('LUNA', mx + 24, my - 22);
+  g.fillStyle = css(acc); g.font = '400 30px Michroma, sans-serif'; g.fillText('CISLUNAR THEATER', 60, 84);
+  g.fillStyle = rgba(acc, .7); g.font = '22px "JetBrains Mono", monospace';
+  g.fillText('TURN 04 · T+36:00:00 · BLUE CELL', 60, 122);
+  g.textAlign = 'right';
+  g.fillText(`SCALE 1 : ${Math.round(SCALE / 1e6)},000,000`, W - 60, H - 88);
+  g.fillText('EARTH–MOON 384,400 KM', W - 60, H - 56);
+  g.textAlign = 'left';
+  screenTex.needsUpdate = true;
+}
+
+// ---- Tablet UI texture ----
+const [tc, tabletTex] = canvasTex(768, 528);
+function drawTablet(acc) {
+  const g = tc.getContext('2d');
+  g.fillStyle = '#05090d'; g.fillRect(0, 0, 768, 528);
+  g.fillStyle = css(acc); g.font = '400 26px Michroma, sans-serif'; g.fillText('CONTROL', 36, 62);
+  g.fillStyle = rgba(acc, .7); g.font = '20px "JetBrains Mono", monospace'; g.fillText('TURN 04 · BLUE CELL', 36, 96);
+  ['ADVANCE TURN', 'ORBITS', 'LAGRANGE', 'RESET VIEW'].forEach((t, i) => {
+    const x = 36 + (i % 2) * 356, y = 130 + Math.floor(i / 2) * 150;
+    g.fillStyle = rgba(acc, i === 0 ? .28 : .08); g.fillRect(x, y, 340, 130);
+    g.strokeStyle = rgba(acc, .8); g.lineWidth = 2; g.strokeRect(x + 1, y + 1, 338, 128);
+    g.fillStyle = css(acc); g.font = '24px "JetBrains Mono", monospace'; g.fillText(t, x + 24, y + 74);
+  });
+  g.fillStyle = rgba(acc, .15); g.fillRect(36, 452, 696, 14);
+  g.fillStyle = css(acc); g.fillRect(36, 452, 696 * .4, 14);
+  tabletTex.needsUpdate = true;
+}
+
+// ---- Border paint texture (covers the whole glass; picture window is transparent) ----
+const BPX = 34.1333; // px per inch → 2048 × 1229
+const [bc, borderTex] = canvasTex(2048, 1229);
+function drawBorder(color, marks, acc) {
+  const g = bc.getContext('2d'), W = 2048, H = 1229;
+  const x0 = (GLASS.w - PIC.w) / 2 * BPX, y0 = (GLASS.d - PIC.d) / 2 * BPX, w = PIC.w * BPX, h = PIC.d * BPX;
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = color; g.fillRect(0, 0, W, H);
+  g.clearRect(x0, y0, w, h);
+  const ink = rgba(acc, .85);
+  if (marks === 'ticks' || marks === 'call') {
+    g.strokeStyle = ink; g.lineWidth = 3;
+    for (let i = 0; i <= Math.floor(PIC.w); i++) {
+      const x = x0 + i * BPX, L = i % 6 ? 12 : 26;
+      g.beginPath(); g.moveTo(x, y0 - 4); g.lineTo(x, y0 - 4 - L); g.moveTo(x, y0 + h + 4); g.lineTo(x, y0 + h + 4 + L); g.stroke();
+    }
+    for (let i = 0; i <= Math.floor(PIC.d); i++) {
+      const y = y0 + i * BPX, L = i % 6 ? 12 : 26;
+      g.beginPath(); g.moveTo(x0 - 4, y); g.lineTo(x0 - 4 - L, y); g.moveTo(x0 + w + 4, y); g.lineTo(x0 + w + 4 + L, y); g.stroke();
+    }
+  }
+  if (marks === 'call') {
+    g.fillStyle = color; g.fillRect(W / 2 - 430, y0 + h + 2, 860, H - y0 - h);
+    g.fillStyle = ink; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = '400 30px Michroma, sans-serif';
+    g.fillText('CISLUNAR OPS  ·  TABLE 01', W / 2, y0 + h + (H - y0 - h) / 2 + 2);
+    g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+  }
+  if (marks === 'hazard') {
+    const len = 8 * BPX;
+    for (const [cx, cy, sx, sy] of [[0, 0, 1, 1], [W, 0, -1, 1], [0, H, 1, -1], [W, H, -1, -1]]) {
+      g.save(); g.beginPath();
+      g.rect(Math.min(cx, cx + sx * len), Math.min(cy, cy + sy * len), len, len);
+      g.clip();
+      g.beginPath(); g.rect(x0, y0, w, h); g.rect(0, 0, W, H); g.clip('evenodd');
+      g.fillStyle = rgba(acc, .9);
+      for (let d = -len * 2; d < W + H; d += 44) { g.beginPath(); g.moveTo(d, 0); g.lineTo(d + 22, 0); g.lineTo(d + 22 - H, H); g.lineTo(d - H, H); g.fill(); }
+      g.restore();
+    }
+  }
+  borderTex.needsUpdate = true;
+}
+
+// ---- Earth / Moon textures ----
+function earthTex() {
+  const [c, t] = canvasTex(512, 256), g = c.getContext('2d'), r = rng(7);
+  g.fillStyle = '#1d4f8f'; g.fillRect(0, 0, 512, 256);
+  for (let i = 0; i < 46; i++) {
+    g.fillStyle = r() < .7 ? '#3f7d3a' : '#8a7a4a';
+    g.beginPath(); g.ellipse(r() * 512, 50 + r() * 156, 10 + r() * 40, 8 + r() * 24, r() * 3, 0, 7); g.fill();
+  }
+  g.fillStyle = '#eef3f6'; g.fillRect(0, 0, 512, 14); g.fillRect(0, 242, 512, 14);
+  g.fillStyle = 'rgba(255,255,255,.35)';
+  for (let i = 0; i < 60; i++) { g.beginPath(); g.ellipse(r() * 512, r() * 256, 8 + r() * 30, 3 + r() * 6, 0, 0, 7); g.fill(); }
+  return t;
+}
+function moonTex() {
+  const [c, t] = canvasTex(256, 128), g = c.getContext('2d'), r = rng(3);
+  g.fillStyle = '#a3a3a0'; g.fillRect(0, 0, 256, 128);
+  for (let i = 0; i < 40; i++) { g.fillStyle = `rgba(60,60,60,${.15 + r() * .3})`; g.beginPath(); g.arc(r() * 256, r() * 128, 2 + r() * 12, 0, 7); g.fill(); }
+  return t;
+}
+
+// ================= Build =================
+const hx = TOP_W / 2, hz = TOP_D / 2;
+
+// Table top: 12-ga sheet + 1½″ lip
+ibox(TOP_W, SHEET, TOP_D, mat.steel, 0, TT - SHEET, 0);
+ibox(TOP_W, LIP, SHEET, mat.steel, 0, TT - LIP, hz - SHEET / 2);
+ibox(TOP_W, LIP, SHEET, mat.steel, 0, TT - LIP, -hz + SHEET / 2);
+ibox(SHEET, LIP, TOP_D, mat.steel, hx - SHEET / 2, TT - LIP, 0);
+ibox(SHEET, LIP, TOP_D, mat.steel, -hx + SHEET / 2, TT - LIP, 0);
+
+// Legs + casters
+const LEG = 2, CASTER = 5;
+const lx = hx - SHEET - LEG / 2 - .15, lz = hz - SHEET - LEG / 2 - .15;
+const legs = [];
+for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+  legs.push([sx * lx, sz * lz]);
+  ibox(LEG, TT - SHEET - CASTER, LEG, mat.steel, sx * lx, CASTER, sz * lz);
+  ibox(4, .25, 4, mat.zinc, sx * lx, CASTER - .25, sz * lz);                 // top plate
+  add(new THREE.CylinderGeometry(.9 * IN, .9 * IN, .35 * IN, 20), mat.zinc, sx * lx * IN, (CASTER - .45) * IN, sz * lz * IN); // swivel race
+  for (const s of [-1, 1]) ibox(.14, 3.1, 1.6, mat.zinc, sx * lx + s * .75, 1.6, sz * (lz - 1.2)); // yoke plates
+  const wheel = add(new THREE.CylinderGeometry(2 * IN, 2 * IN, 1.25 * IN, 32), mat.wheel, sx * lx * IN, 2 * IN, sz * (lz - 1.2) * IN);
+  wheel.rotation.z = Math.PI / 2;
+  const hub = add(new THREE.CylinderGeometry(.8 * IN, .8 * IN, 1.3 * IN, 20), mat.zinc, sx * lx * IN, 2 * IN, sz * (lz - 1.2) * IN);
+  hub.rotation.z = Math.PI / 2;
+  if (sz > 0) ibox(1.1, .25, 1, mat.rubber, sx * lx, 3.6, sz * lz + .4); // brake pedal on front casters
+}
+// Upper rails under the top (behind the lip)
+ibox(TOP_W - 2 * SHEET - 4.4, 1.5, 1.5, mat.steel, 0, TT - SHEET - 1.5, lz);
+ibox(TOP_W - 2 * SHEET - 4.4, 1.5, 1.5, mat.steel, 0, TT - SHEET - 1.5, -lz);
+// Shelf rails + shelf
+for (const sx of [-1, 1]) ibox(1.5, 1.5, 2 * lz - LEG, mat.steel, sx * lx, SHELF.y - 1.5, 0);
+ibox(2 * lx + LEG, 1.5, 1.5, mat.steel, 0, SHELF.y - 1.5, lz);
+ibox(2 * lx + LEG, 1.5, 1.5, mat.steel, 0, SHELF.y - 1.5, -lz);
+ibox(2 * lx - LEG, .075, SHELF.d, mat.steel, 0, SHELF.y - .075, 0);
+ibox(2 * lx - LEG, 1, .075, mat.steel, 0, SHELF.y - 1, SHELF.d / 2);
+ibox(2 * lx - LEG, 1, .075, mat.steel, 0, SHELF.y - 1, -SHELF.d / 2);
+
+// PC + power strip on the shelf
+const pc = add(new RoundedBoxGeometry(7.5 * IN, 15 * IN, 14 * IN, 3, .25 * IN), mat.pc, -16 * IN, (SHELF.y + 7.5) * IN, 0);
+ibox(.15, .5, .5, mat.led, -16 + 3.2, SHELF.y + 13.4, 7.01);
+ibox(12, 1.5, 2.2, mat.pc, 10, SHELF.y, 5);
+
+// TV on 1″ spacers
+for (const sx of [-1, 1]) for (const sz of [-1, 1])
+  add(new THREE.CylinderGeometry(.375 * IN, .375 * IN, .9 * IN, 20), mat.alu, sx * 3.94 * IN, (TT + .45) * IN, sz * 3.94 * IN);
+add(new RoundedBoxGeometry(TV.w * IN, (TV.face - TV.bottom) * IN, TV.d * IN, 2, .35 * IN), mat.tv, 0, (TV.bottom + TV.face) / 2 * IN, 0);
+ibox(TV.w - .6, .02, TV.d - .6, mat.bezel, 0, TV.face, 0);
+const screen = add(new THREE.PlaneGeometry(SCR_W, SCR_D).rotateX(-Math.PI / 2),
+  std({ color: 0x000000, emissive: 0xffffff, emissiveMap: screenTex, roughness: .25 }), 0, (TV.face + .025) * IN, 0);
+
+// Frame walls (.090″ aluminum), wrapping the table lip
+const wh = WALL.top - WALL.bottom, fx = hx + WALL.t / 2, fz = hz + WALL.t / 2;
+const frameParts = [
+  ibox(TOP_W + 2 * WALL.t, wh, WALL.t, mat.frame, 0, WALL.bottom, fz),
+  ibox(TOP_W + 2 * WALL.t, wh, WALL.t, mat.frame, 0, WALL.bottom, -fz),
+  ibox(WALL.t, wh, TOP_D, mat.frame, fx, WALL.bottom, 0),
+  ibox(WALL.t, wh, TOP_D, mat.frame, -fx, WALL.bottom, 0),
+];
+// Button-head bolts through the lip
+const boltGeo = new THREE.SphereGeometry(.21 * IN, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+const by = (TT - .75) * IN;
+for (const x of [-25, -15, -5, 5, 15, 25]) for (const s of [-1, 1]) {
+  const b = add(boltGeo, mat.zinc, x * IN, by, s * (hz + WALL.t) * IN); b.rotation.x = s * Math.PI / 2;
+}
+for (const z of [-12, 0, 12]) for (const s of [-1, 1]) {
+  const b = add(boltGeo, mat.zinc, s * (hx + WALL.t) * IN, by, z * IN); b.rotation.z = -s * Math.PI / 2;
+}
+// Glass ledge: 1×1×⅛ angle inside the walls
+const LT = .125, ly = GLASS.bottom - LT;
+ibox(TOP_W - .02, LT, 1, mat.alu, 0, ly, hz - .5); ibox(TOP_W - .02, LT, 1, mat.alu, 0, ly, -hz + .5);
+ibox(1, LT, TOP_D - 2, mat.alu, hx - .5, ly, 0); ibox(1, LT, TOP_D - 2, mat.alu, -hx + .5, ly, 0);
+ibox(TOP_W - .02, 1, LT, mat.alu, 0, ly - 1 + LT, hz - LT / 2); ibox(TOP_W - .02, 1, LT, mat.alu, 0, ly - 1 + LT, -hz + LT / 2);
+ibox(LT, 1, TOP_D, mat.alu, hx - LT / 2, ly - 1 + LT, 0); ibox(LT, 1, TOP_D, mat.alu, -hx + LT / 2, ly - 1 + LT, 0);
+
+// Painted border on the glass underside
+const borderMat = std({ map: borderTex, transparent: true, alphaTest: .5, roughness: .35, metalness: 0 });
+const border = add(new THREE.PlaneGeometry(GLASS.w * IN, GLASS.d * IN).rotateX(-Math.PI / 2), borderMat, 0, (GLASS.bottom + .01) * IN, 0);
+
+// Glass: top, bottom, green edges
+const glassMesh = add(new THREE.BoxGeometry(GLASS.w * IN, GLASS.t * IN, GLASS.d * IN),
+  [mat.glassEdge, mat.glassEdge, mat.glassTop, mat.glassBot, mat.glassEdge, mat.glassEdge], 0, (GLASS.bottom + GLASS.t / 2) * IN, 0);
+glassMesh.renderOrder = 3; border.renderOrder = 2;
+
+// Vent slots (optional, cut after the heat test)
+const vents = new THREE.Group(); table.add(vents);
+for (const s of [-1, 1]) for (const x of [-21, -17, -13, -9, 9, 13, 17, 21])
+  ibox(2.6, .45, .02, mat.slot, x, TT + 2.1, s * (hz + WALL.t + .01), vents);
+
+// ---- Shell around the locked frame (rebuilt on every change) ----
+const OX = hx + WALL.t, OZ = hz + WALL.t; // outer faces of the frame walls
+const Y0 = WALL.top;                      // deck top, flush with the wall tops
+const CK = { square: 0, chamfer: .586, facet: 1.25 };
+const chamf = d => Math.max(0, -d) * CK[cfg.corners];
+// Octagonal ring at inset d (negative = outward past the frame): 8 corners
+function octo(d) {
+  const a = OX - d, b = OZ - d, c = chamf(d);
+  return [[a, b - c], [a - c, b], [-a + c, b], [-a, b - c], [-a, -b + c], [-a + c, -b], [a - c, -b], [a, -b + c]];
+}
+// Loft a profile [[inset, height]] (inches) around the table
+function ring(profile, m, parent, closed = false) {
+  const pts = closed ? [...profile, profile[0]] : profile;
+  const rows = pts.map(([d]) => octo(d));
+  const cum = rows.map(o => { const a = [0]; for (let k = 0; k < 8; k++) { const p = o[k], q = o[(k + 1) % 8]; a.push(a[k] + Math.hypot(q[0] - p[0], q[1] - p[1])); } return a; });
+  const vcum = [0]; for (let j = 1; j < pts.length; j++) vcum.push(vcum[j - 1] + Math.hypot(pts[j][0] - pts[j - 1][0], pts[j][1] - pts[j - 1][1]));
+  const pos = [], uv = [];
+  for (let j = 0; j < pts.length - 1; j++) for (let k = 0; k < 8; k++) {
+    const k2 = (k + 1) % 8, y1 = pts[j][1] * IN, y2 = pts[j + 1][1] * IN;
+    const A = rows[j][k], B = rows[j][k2], C = rows[j + 1][k2], D = rows[j + 1][k];
+    if (Math.hypot(B[0] - A[0], B[1] - A[1]) + Math.hypot(C[0] - D[0], C[1] - D[1]) < 1e-4) continue;
+    const va = [A[0] * IN, y1, A[1] * IN], vb = [B[0] * IN, y1, B[1] * IN], vc = [C[0] * IN, y2, C[1] * IN], vd = [D[0] * IN, y2, D[1] * IN];
+    pos.push(...va, ...vb, ...vc, ...va, ...vc, ...vd);
+    const ua = cum[j][k] / 48, ub = cum[j][k + 1] / 48, uc = cum[j + 1][k + 1] / 48, ud = cum[j + 1][k] / 48, v1 = vcum[j] / 12, v2 = vcum[j + 1] / 12;
+    uv.push(ua, v1, ub, v1, uc, v2, ua, v1, uc, v2, ud, v2);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.computeVertexNormals();
+  return add(g, m, 0, 0, 0, parent);
+}
+// Place a box flat on one straight side of a sloped face.
+// seg = [[d,y] bottom, [d,y] top]; side 0..3 = +z, +x, -z, -x
+function faceGroup(side, parent) {
+  const g = new THREE.Group(); g.rotation.y = side * Math.PI / 2; parent.add(g);
+  return { g, off: side % 2 ? OX : OZ, oth: side % 2 ? OZ : OX };
+}
+function onFace(F, seg, u, s, w, along, depth, m) {
+  const [[d1, y1], [d2, y2]] = seg, d = d1 + (d2 - d1) * s, y = y1 + (y2 - y1) * s;
+  const th = Math.atan2(-(d2 - d1), y2 - y1), ny = -Math.sin(th), nz = Math.cos(th);
+  const me = add(new THREE.BoxGeometry(w * IN, along * IN, depth * IN), m, u * IN, (y + ny * depth / 2) * IN, (F.off - d + nz * depth / 2) * IN, F.g);
+  me.rotation.x = th; return me;
+}
+const faceHalf = (F, d) => F.oth - d - chamf(d);
+
+const variants = new THREE.Group(); table.add(variants);
+let reachIn = 6;
+function buildVariants() {
+  variants.traverse(o => { if (o.isMesh) o.geometry.dispose(); });
+  variants.clear();
+  const V = variants, W = +cfg.reach, lit = cfg.lights; reachIn = W;
+  // ---- Deck ----
+  let deck;
+  if (cfg.edge === 'flat') deck = [[.09, Y0 - .3], [.09, Y0], [-W, Y0], [-W, Y0 - 1.5], [0, Y0 - 1.5]];
+  if (cfg.edge === 'chamfer') deck = [[.09, Y0 - .3], [.09, Y0], [-W + 1.1, Y0], [-W, Y0 - 1.1], [-W, Y0 - 1.75], [0, Y0 - 1.75]];
+  if (cfg.edge === 'slope') deck = [[.09, Y0 - .3], [.09, Y0 + .35], [-W, Y0 - .9], [-W, Y0 - 1.9], [0, Y0 - 1.9]];
+  if (cfg.edge === 'ridge') deck = [[.09, Y0 - .3], [.09, Y0], [-.3, Y0 + .55], [-1.2, Y0 + .55], [-1.7, Y0], [-W, Y0 - .3], [-W, Y0 - 1.5], [0, Y0 - 1.5]];
+  if (W === 0) deck = [[0, WALL.bottom]];
+  else ring(deck, mat.deck, V);
+  const Ybot = deck[deck.length - 1][1];
+  const topY = d => { // deck surface height at inset d
+    for (let i = 1; i < deck.length; i++) {
+      const [da, ya] = deck[i - 1], [db, yb] = deck[i];
+      if (d <= da && d >= db && da !== db) return ya + (yb - ya) * (d - da) / (db - da);
+    }
+    return Y0;
+  };
+  if (W > 0 && (lit === 'halo' || lit === 'all')) {
+    const h1 = cfg.edge === 'ridge' ? -.45 : -.55, h2 = cfg.edge === 'ridge' ? -1.05 : -.95;
+    ring([[h1, topY(h1) + .02], [h2, topY(h2) + .02]], mat.led, V);
+  }
+  if (lit === 'under' || lit === 'all') ring(W ? [[-W + .8, Ybot - .02], [-W + 1.4, Ybot - .02]] : [[.3, Ybot - .02], [.8, Ybot - .02]], mat.led, V);
+  floorGlow.visible = lit === 'under' || lit === 'all';
+  floorGlow.scale.set((OX + W + 8) / (OX + 8), 1, (OZ + W + 8) / (OZ + 8));
+
+  // Corner caps with indicator lights on chamfered deck corners
+  if (W > 0 && cfg.corners !== 'square' && cfg.detail === 'greebles') {
+    const c = chamf(-W), a = OX + W, b = OZ + W, y = (Ybot + topY(-W)) / 2;
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      const cap = ibox(c * .7, .35, .12, mat.trim, sx * (a - c / 2 + .04), y - .18, sz * (b - c / 2 + .04), V);
+      cap.rotation.y = Math.atan2(sx, sz);
+      const lt = ibox(c * .25, .12, .14, mat.amber, sx * (a - c / 2 + .06), y - .06, sz * (b - c / 2 + .06), V);
+      lt.rotation.y = cap.rotation.y;
+    }
+  }
+
+  // ---- Body ----
+  if (cfg.shape !== 'open') {
+    const yEnd = cfg.base === 'plinth' ? 4 : 6.5, Wb = Math.max(W - .75, .6);
+    let body, face;
+    if (cfg.shape === 'wedge') { body = [[-Wb, Ybot], [-.6, yEnd]]; face = [[-.6, yEnd], [-Wb, Ybot]]; }
+    if (cfg.shape === 'floating') { body = [[-.6, Ybot], [-.6, yEnd]]; face = [[-.6, yEnd], [-.6, Ybot]]; }
+    if (cfg.shape === 'hourglass') {
+      const yW = yEnd + (Ybot - yEnd) * .42, fl = -(W * .55 + .4);
+      body = [[-Wb, Ybot], [-.6, yW], [fl, yEnd + 3], [fl, yEnd]]; face = [[-.6, yW], [-Wb, Ybot]];
+    }
+    const last = body[body.length - 1][0];
+    if (cfg.base === 'plinth') {
+      ring([...body, [-.15, yEnd]], mat.frame, V);
+      ring([[-.15, yEnd], [-.15, .6], [.4, .6]], mat.pc, V);
+    } else ring([...body, [.4, yEnd]], mat.frame, V);
+
+    // Details on the main face of each side
+    const L = Math.hypot(face[1][0] - face[0][0], face[1][1] - face[0][1]);
+    const dMax = Math.max(face[0][0], face[1][0]); // narrowest point of the face
+    for (let side = 0; side < 4; side++) {
+      const F = faceGroup(side, V), half = faceHalf(F, dMax) - 1.5, long = side % 2 === 0;
+      if (cfg.detail === 'slats') {
+        const n = Math.floor(half * 2 / 3.2);
+        for (let i = 0; i <= n; i++) onFace(F, face, -half + i * (2 * half / n), .5, 2.1, L - 1.5, .55, mat.deck);
+      }
+      if (cfg.detail === 'greebles') {
+        if (long) {
+          for (let i = 0; i < 7; i++) onFace(F, face, -half * .45, .3 + i * .06, half * .6, .45, .3, mat.trim);
+          const hx2 = onFace(F, face, half * .12, .55, 5.2, 5.2, .2, mat.trim);
+          hx2.geometry.dispose(); hx2.geometry = new THREE.CylinderGeometry(2.6 * IN, 2.6 * IN, .25 * IN, 6); hx2.rotation.x += Math.PI / 2;
+          const core = onFace(F, face, half * .12, .55, 2.6, 2.6, .3, mat.led);
+          core.geometry.dispose(); core.geometry = new THREE.CylinderGeometry(1.2 * IN, 1.2 * IN, .3 * IN, 6); core.rotation.x += Math.PI / 2;
+          for (let i = 0; i < 5; i++) onFace(F, face, half * .45 + i * 2, .45, .9, .45, .2, i % 2 ? mat.red : mat.amber);
+          onFace(F, face, 0, .82, half * 1.7, .5, .25, mat.trim);
+        } else {
+          for (let i = 0; i < 6; i++) onFace(F, face, -5 + i * 2, .5, .6, L * .5, .3, mat.trim);
+          for (let i = 0; i < 3; i++) onFace(F, face, 7 + i * 1.6, .7, .8, .4, .2, mat.amber);
+        }
+      }
+    }
+    if (cfg.detail === 'inlay' || lit === 'all') {
+      const s = cfg.detail === 'inlay' ? .5 : .86;
+      const d = face[0][0] + (face[1][0] - face[0][0]) * s, y = face[0][1] + (face[1][1] - face[0][1]) * s;
+      ring([[d, y - .35], [d - .15, y - .35], [d - .15, y + .35], [d, y + .35]], lit === 'all' ? mat.led : mat.trim, V, true);
+    }
+  }
+  V.traverse(o => { if (o.isMesh && ![mat.led, mat.amber, mat.red].includes(o.material)) { o.castShadow = true; o.receiveShadow = true; } });
+  // Keep the kiosk stand clear of the deck
+  const sx = (OX + W + 10) * IN, sz = OZ * .7 * IN;
+  stand.position.set(sx, 0, sz); stand.rotation.y = Math.atan2(-sx, -sz) + Math.PI;
+}
+
+// Earth + Moon props at true scale
+const GT = (GLASS.bottom + GLASS.t) * IN;
+const props = new THREE.Group(); table.add(props);
+function prop(p, radius, tex, tilt) {
+  const g = new THREE.Group(); g.position.set(p.x, GT, p.z); props.add(g);
+  add(new THREE.CylinderGeometry(Math.max(radius * 1.3, .008), Math.max(radius * 1.45, .009), .004, 40), mat.pc, 0, .002, 0, g);
+  const sph = add(new THREE.SphereGeometry(radius, 48, 32), std({ map: tex, roughness: .6, metalness: 0 }), 0, .004 + radius * .95, 0, g);
+  sph.rotation.z = tilt;
+}
+prop(EARTH, 6371e3 / SCALE, earthTex(), .41);
+prop(MOON, 1737e3 / SCALE, moonTex(), 0);
+
+// Tablet kiosk stand (floor-standing)
+const stand = new THREE.Group(); table.add(stand);
+add(new THREE.CylinderGeometry(.16, .17, .012, 40), mat.pc, 0, .006, 0, stand);
+add(new THREE.CylinderGeometry(.018, .018, 1.0, 20), mat.pc, 0, .51, 0, stand);
+const head = new THREE.Group(); head.position.set(0, 1.03, 0); head.rotation.x = -.85; stand.add(head);
+add(new RoundedBoxGeometry(.27, .195, .016, 2, .01), mat.pc, 0, 0, 0, head);
+add(new THREE.PlaneGeometry(.235, .163), std({ color: 0x000000, emissive: 0xffffff, emissiveMap: tabletTex, roughness: .25 }), 0, 0, .0085, head);
+
+table.traverse(o => { if (o.isMesh && o !== glassMesh && o !== border && o !== screen) { o.castShadow = true; o.receiveShadow = true; } });
+
+// ---- Room (not exported to AR) ----
+const floorMat = std({ color: 0x0e1115, roughness: .85, metalness: .1 });
+const floor = add(new THREE.CircleGeometry(10, 64).rotateX(-Math.PI / 2), floorMat, 0, 0, 0, scene);
+floor.receiveShadow = true;
+const [gc, glowTex] = canvasTex(256, 256);
+{ const g = gc.getContext('2d'), gr = g.createRadialGradient(128, 128, 10, 128, 128, 128);
+  gr.addColorStop(0, 'rgba(255,255,255,.9)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 256, 256); }
+const glowMat = new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, opacity: .5, blending: THREE.AdditiveBlending, depthWrite: false });
+const floorGlow = add(new THREE.PlaneGeometry(2.6, 1.8).rotateX(-Math.PI / 2), glowMat, 0, .002, 0, scene);
+
+const hemi = new THREE.HemisphereLight(0x9fb8cc, 0x0b0e12, .6); scene.add(hemi);
+const key = new THREE.DirectionalLight(0xffffff, 2.2);
+key.position.set(2.5, 4.5, 1.8); key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048); key.shadow.bias = -.0004; key.shadow.normalBias = .01;
+Object.assign(key.shadow.camera, { left: -1.8, right: 1.8, top: 1.8, bottom: -1.8, near: .5, far: 10 });
+scene.add(key);
+const fill = new THREE.DirectionalLight(0xbcd4ff, .5); fill.position.set(-3, 2, -2); scene.add(fill);
+const screenLight = new THREE.PointLight(0x4fd8ff, 1.4, 3, 2); screenLight.position.set(0, 1.35, 0); scene.add(screenLight);
+
+// ================= Apply configuration =================
+function setFinish(m, f) {
+  let map = null;
+  if (f.wood) { map = woodTex(f); m.color.setHex(0xffffff); m.metalness = 0; }
+  else {
+    m.color.setHex(f.c); m.metalness = f.m;
+    map = f.brush ? brushTex : f.tex === 'carbon' ? carbonTex : f.tex === 'leather' ? leatherTex : null;
+  }
+  m.roughness = f.r; m.clearcoat = f.cc || 0; m.clearcoatRoughness = .1;
+  if (m.map !== map) { m.map = map; m.needsUpdate = true; }
+}
+function apply() {
+  const gl = pick('glass', cfg.glass), acc = pick('accent', cfg.accent).hex, body = pick('body', cfg.body);
+  setFinish(mat.deck, pick('deck', cfg.deck));
+  setFinish(mat.frame, body);
+  setFinish(mat.steel, cfg.table === 'match' ? body : pick('table', cfg.table));
+  setFinish(mat.trim, pick('trim', cfg.trim));
+  buildVariants();
+  mat.glassTop.color.setHex(gl.tint); mat.glassBot.color.setHex(gl.tint); mat.glassEdge.color.setHex(gl.edge);
+  mat.glassTop.roughness = gl.r; mat.glassTop.opacity = gl.r > .1 ? .22 : .1;
+  mat.led.emissive.setHex(acc); glowMat.color.setHex(acc); screenLight.color.setHex(acc);
+  document.documentElement.style.setProperty('--led', css(acc));
+  drawScreen(acc, cfg.screen); drawTablet(acc);
+  drawBorder(pick('border', cfg.border).c, cfg.marks, acc);
+  screenLight.intensity = cfg.screen === 'off' ? 0 : cfg.screen === 'map' ? 1.4 : 1;
+  vents.visible = cfg.vents === 'on';
+  props.visible = cfg.props === 'on';
+  stand.visible = cfg.stand === 'on';
+  const studio = cfg.room === 'studio';
+  scene.background = new THREE.Color(studio ? 0x2b3036 : 0x07090c);
+  scene.fog = new THREE.Fog(scene.background, studio ? 9 : 6, studio ? 20 : 15);
+  floorMat.color.setHex(studio ? 0x51565c : 0x0e1115);
+  key.intensity = studio ? 2.8 : 1.8; hemi.intensity = studio ? 1 : .45;
+  renderer.toneMappingExposure = studio ? 1 : .95;
+  renderImpact();
+  try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {}
+}
+
+// ================= UI =================
+const opts = document.getElementById('opts');
+const money = n => n ? `+$${n}` : '$0';
+{
+  const pg = document.createElement('div'); pg.className = 'grp';
+  pg.innerHTML = '<h2>Presets</h2><div class="chips"></div>';
+  PRESETS.forEach(p => {
+    const b = document.createElement('button'); b.textContent = p.name;
+    b.onclick = () => { Object.assign(cfg, p.cfg); apply(); syncChips(); };
+    pg.lastChild.appendChild(b);
+  });
+  opts.appendChild(pg);
+}
+let lastSec = '';
+for (const grp of UI_GROUPS) {
+  if (grp.sec !== lastSec) {
+    lastSec = grp.sec;
+    const sh = document.createElement('h3'); sh.className = 'sec'; sh.textContent = grp.sec; opts.appendChild(sh);
+  }
+  const el = document.createElement('div'); el.className = 'grp';
+  const h = document.createElement('h2'); h.textContent = grp.label; h.id = 'g-' + grp.key;
+  const chips = document.createElement('div'); chips.className = 'chips'; chips.setAttribute('role', 'group'); chips.setAttribute('aria-labelledby', h.id);
+  for (const it of grp.items) {
+    const b = document.createElement('button'); b.dataset.k = grp.key; b.dataset.v = it.id;
+    if (it.sw) { const s = document.createElement('span'); s.className = 'sw'; s.style.background = it.sw; b.appendChild(s); }
+    b.appendChild(document.createTextNode(it.name));
+    if (it.cost) { const c = document.createElement('span'); c.className = 'cost'; c.textContent = `~+$${it.cost}`; b.appendChild(c); }
+    b.onclick = () => { cfg[grp.key] = it.id; apply(); syncChips(); };
+    chips.appendChild(b);
+  }
+  el.append(h, chips); opts.appendChild(el);
+}
+function syncChips() {
+  opts.querySelectorAll('button[data-k]').forEach(b => b.setAttribute('aria-pressed', String(cfg[b.dataset.k] === b.dataset.v)));
+}
+function renderImpact() {
+  const rows = GROUPS.map(g => [g.label.replace(/ \(.*\)/, ''), pick(g.key, cfg[g.key])]).filter(([, it]) => it.cost);
+  const tot = rows.reduce((s, [, it]) => s + it.cost, 0);
+  document.getElementById('impact').innerHTML =
+    `<div class="row tot"><span>Options over the base build</span><b>~${money(tot)}</b></div>`;
+}
+
+const panel = document.getElementById('panel'), moreBtn = document.getElementById('more');
+if (innerWidth > 760) panel.classList.remove('collapsed');
+moreBtn.onclick = () => {
+  const open = panel.classList.toggle('collapsed') === false;
+  moreBtn.setAttribute('aria-expanded', String(open)); moreBtn.textContent = open ? 'Close ▾' : 'Customize ▴';
+};
+
+const toastEl = document.getElementById('toast'); let toastTimer;
+function toast(msg) { toastEl.textContent = msg; toastEl.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => toastEl.hidden = true, 4500); }
+
+// Camera views
+const T = y => y * IN;
+const VIEWS = {
+  overview: { pos: [2.3, 1.9, 2.5], tgt: [0, .85, 0] },
+  stand: { pos: [0, 1.62, 1.35], tgt: [0, T(TT + 4), -.05] },
+  top: { pos: [0, 3.3, .001], tgt: [0, T(TT + 4), 0] },
+  edge: { pos: [1.02, 1.12, .72], tgt: [T(hx) - .08, T(TT + 2), T(hz) - .08] },
+};
+let fly = null;
+const viewBtns = [...document.querySelectorAll('[data-view]')];
+function goView(name, instant) {
+  const v = name === 'edge'
+    ? { tgt: [T(OX + reachIn) * .93, T(TT + 1), T(OZ + reachIn) * .9], pos: [T(OX + reachIn) + .45, T(TT + 12), T(OZ + reachIn) + .5] }
+    : VIEWS[name];
+  viewBtns.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === name)));
+  const to = { pos: new THREE.Vector3(...v.pos), tgt: new THREE.Vector3(...v.tgt) };
+  if (portrait() && name === 'overview') to.pos.multiplyScalar(1.25);
+  if (instant || reduceMotion) { camera.position.copy(to.pos); controls.target.copy(to.tgt); fly = null; }
+  else fly = { from: { pos: camera.position.clone(), tgt: controls.target.clone() }, to, t: 0 };
+  if (name !== 'overview') setRotate(false);
+}
+viewBtns.forEach(b => b.onclick = () => goView(b.dataset.view));
+
+const rotBtn = document.getElementById('rot');
+function setRotate(on) { controls.autoRotate = on; rotBtn.setAttribute('aria-pressed', String(on)); }
+rotBtn.onclick = () => setRotate(!controls.autoRotate);
+controls.addEventListener('start', () => { setRotate(false); fly = null; });
+
+const arBtn = document.getElementById('ar');
+arBtn.onclick = async () => {
+  const a = document.createElement('a');
+  if (!(a.relList && a.relList.supports && a.relList.supports('ar'))) {
+    toast('AR opens in Safari on iPhone or iPad. On this device you get the 3D view.');
+    return;
+  }
+  arBtn.disabled = true; arBtn.textContent = 'Preparing…';
+  try {
+    const { USDZExporter } = await import('three/addons/exporters/USDZExporter.js');
+    const ex = new USDZExporter();
+    const data = ex.parseAsync ? await ex.parseAsync(table) : await ex.parse(table);
+    a.rel = 'ar';
+    a.href = URL.createObjectURL(new Blob([data], { type: 'model/vnd.usdz+zip' }));
+    a.appendChild(document.createElement('img'));
+    document.body.appendChild(a); a.click(); a.remove();
+  } catch (e) {
+    toast(`Couldn't build the AR model: ${e.message}`);
+  } finally {
+    arBtn.disabled = false; arBtn.textContent = 'View in AR';
+  }
+};
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.fov = portrait() ? 58 : 36;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+apply(); syncChips();
+goView('overview', true);
+setRotate(!reduceMotion);
+document.fonts?.ready.then(apply);
+
+const clock = new THREE.Clock();
+let first = true;
+renderer.setAnimationLoop(() => {
+  const dt = clock.getDelta(), t = clock.elapsedTime;
+  if (fly) {
+    fly.t = Math.min(1, fly.t + dt / 1.1);
+    const e = fly.t < .5 ? 2 * fly.t * fly.t : 1 - Math.pow(-2 * fly.t + 2, 2) / 2;
+    camera.position.lerpVectors(fly.from.pos, fly.to.pos, e);
+    controls.target.lerpVectors(fly.from.tgt, fly.to.tgt, e);
+    if (fly.t === 1) fly = null;
+  }
+  if (!reduceMotion) mat.led.emissiveIntensity = 2 + .25 * Math.sin(t * 1.6);
+  controls.update();
+  renderer.render(scene, camera);
+  if (first) { first = false; document.getElementById('status').hidden = true; }
+});
+</script>
+
+</html>

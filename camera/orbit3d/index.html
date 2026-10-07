@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbital Table</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #d8e6ff; font-family: 'JetBrains Mono', ui-monospace, monospace; overflow: hidden; }
+  canvas { display: block; }
+  .lbl { position: fixed; pointer-events: none; transform: translate(-50%, 0); letter-spacing: .14em; white-space: nowrap; text-align: center; line-height: 1.35; text-shadow: 0 0 6px #000; }
+  .lbl small { display: block; opacity: .6; letter-spacing: .08em; }
+  #feed { position: fixed; top: 12px; left: 12px; width: 8px; height: 8px; border-radius: 50%; background: #8a909c; box-shadow: 0 0 8px currentColor; }
+  #note { position: fixed; top: 8px; left: 28px; font-size: 11px; letter-spacing: .1em; color: rgba(170,176,188,.8); }
+  #cal { position: fixed; inset: 0; background: #000; display: none; }
+  #cal img { position: fixed; image-rendering: pixelated; background: #fff; box-sizing: content-box; }
+  #calmsg { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 16px; letter-spacing: .14em; color: #fff; text-align: center; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="feed"></div><div id="note"></div>
+<div id="cal"><div id="calmsg"></div></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+// ---------------------------------------------------------------------------
+// Everything is in TV-screen millimetres (origin top-left, y down); world = (x, -y).
+// The printed pieces stand on the glass, so the page draws only what belongs *around* them.
+// Scale: 1 mm = 300 km (Earth Ø42.5 mm, GEO radius 140.5 mm).
+// ---------------------------------------------------------------------------
+const KM = 300, R_E = 6371, R_M = 1737, GEO = 42164, MOON_SOI = 66100;
+let SW = 1428.5, SH = 803.5;
+const ROLES = {
+  earth:      { name: 'EARTH' },
+  moon:       { name: 'MOON' },
+  'seldon-1': { name: 'SELDON-1', hex: '#b49cff' },   // lavender, not the yellow wrap
+  'seldon-2': { name: 'SELDON-2', hex: '#c3c8d2' },   // silver, not the pink wrap
+  iss:        { name: 'ISS', hex: '#8fd3ff' },
+};
+const SATS = ['seldon-1', 'seldon-2'];   // ISS parked for now (add 'iss' back here to show it)
+// Base diameters in mm. Each base covers the whole model seen from above (Seldon: 100 mm wingspan,
+// ISS: 120 mm truss + arrays), and everything drawn for a piece stays inside it; only orbits, links
+// and labels reach beyond.
+const BASE_MM = { earth: 42, moon: 24.5, 'seldon-1': 44, 'seldon-2': 44, iss: 70 };   // measured print bases
+const DEMO = { earth: [520, 420], moon: [1180, 260], 'seldon-1': [700, 300], 'seldon-2': [330, 560] };
+
+// ---------- renderer ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+const camera = new THREE.OrthographicCamera(0, 1, 0, -1, -10, 10);
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), .5, .4, .5);
+composer.addPass(bloom);
+
+// ---------- training backgrounds: while the detector records (/record), the page background changes
+// every BG_SECONDS so the model sees the pieces on more than the plain black page. Every other scene is
+// the normal black page. Some scenes scatter piece-coloured, piece-sized shapes as decoys. T toggles by hand.
+const BG_SECONDS = 25;
+const bgCanvas = document.createElement('canvas'), bgTex = new THREE.CanvasTexture(bgCanvas);
+let bgScene = -1, bgManual = false;
+const rnd = (a, b) => a + Math.random() * (b - a);
+const BG = [
+  (g, w, h) => { const gr = g.createLinearGradient(0, 0, w, h); gr.addColorStop(0, `hsl(${rnd(200, 280)},50%,12%)`); gr.addColorStop(1, `hsl(${rnd(0, 360)},40%,6%)`); g.fillStyle = gr; g.fillRect(0, 0, w, h); },
+  (g, w, h) => { g.fillStyle = '#05070c'; g.fillRect(0, 0, w, h); for (let i = 0; i < 900; i++) { g.fillStyle = `rgba(255,255,255,${rnd(.2, 1)})`; g.fillRect(rnd(0, w), rnd(0, h), rnd(1, 3), rnd(1, 3)); } },
+  (g, w, h) => { const v = rnd(70, 140); g.fillStyle = `rgb(${v},${v},${v + 5})`; g.fillRect(0, 0, w, h); },
+  (g, w, h) => { const v = rnd(200, 245); g.fillStyle = `rgb(${v},${v},${v})`; g.fillRect(0, 0, w, h); },
+  (g, w, h) => { g.fillStyle = `hsl(${rnd(0, 360)},${rnd(30, 80)}%,${rnd(20, 55)}%)`; g.fillRect(0, 0, w, h); },
+  (g, w, h) => { const im = g.createImageData(w >> 2, h >> 2); for (let i = 0; i < im.data.length; i += 4) { const v = rnd(0, 255); im.data[i] = v; im.data[i + 1] = v * rnd(.6, 1); im.data[i + 2] = v * rnd(.6, 1); im.data[i + 3] = 255; } const c = document.createElement('canvas'); c.width = im.width; c.height = im.height; c.getContext('2d').putImageData(im, 0, 0); g.imageSmoothingEnabled = false; g.drawImage(c, 0, 0, w, h); },
+  (g, w, h) => { g.fillStyle = '#0a0d14'; g.fillRect(0, 0, w, h); const st = rnd(30, 120); g.strokeStyle = `hsla(${rnd(0, 360)},40%,60%,.6)`; g.lineWidth = rnd(1, 6); for (let x = 0; x < w; x += st) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke(); } for (let y = 0; y < h; y += st) { g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); } },
+  (g, w, h) => { g.fillStyle = `hsl(${rnd(190, 220)},60%,${rnd(25, 45)}%)`; g.fillRect(0, 0, w, h); for (let i = 0; i < 12; i++) { g.fillStyle = `hsl(${rnd(80, 130)},45%,${rnd(25, 45)}%)`; g.beginPath(); g.ellipse(rnd(0, w), rnd(0, h), rnd(40, 300), rnd(40, 200), rnd(0, 3), 0, 7); g.fill(); } },
+  (g, w, h) => {                          // decoys: blobs and bars in the piece colours, at piece sizes
+    g.fillStyle = Math.random() < .5 ? '#000' : `hsl(${rnd(0, 360)},20%,${rnd(8, 30)}%)`; g.fillRect(0, 0, w, h);
+    const cols = ['hsl(48,95%,55%)', 'hsl(330,85%,62%)', 'hsl(205,80%,50%)', 'hsl(110,55%,45%)', '#f2f2f2', 'hsl(25,90%,55%)'];
+    for (let i = 0; i < 18; i++) {
+      g.fillStyle = cols[i % cols.length]; const r = rnd(4, 30) * S;
+      g.save(); g.translate(rnd(0, w), rnd(0, h)); g.rotate(rnd(0, 7));
+      if (Math.random() < .5) { g.beginPath(); g.arc(0, 0, r / 2, 0, 7); g.fill(); } else g.fillRect(-r, -r / 6, 2 * r, r / 3);
+      g.restore();
+    }
+  },
+];
+function setBg(i) {
+  bgScene = i;
+  if (i < 0) { scene.background = new THREE.Color(0x000000); return; }
+  bgCanvas.width = innerWidth; bgCanvas.height = innerHeight;
+  BG[i](bgCanvas.getContext('2d'), bgCanvas.width, bgCanvas.height);
+  bgTex.needsUpdate = true; scene.background = bgTex;
+}
+let bgOrder = [], bgStep = -1;
+function trainBg(now) {
+  const on = bgManual || !!feed?.rec?.recording;
+  if (!on) { if (bgScene !== -1) setBg(-1); bgStep = -1; return; }
+  const step = Math.floor(now / 1000 / BG_SECONDS);
+  if (step === bgStep) return;
+  bgStep = step;
+  if (step % 2) { setBg(-1); return; }                  // every other scene: the normal page
+  if (!bgOrder.length) bgOrder = BG.map((_, i) => i).sort(() => Math.random() - .5);
+  setBg(bgOrder.pop());
+}
+composer.addPass(new OutputPass());
+
+// faint stars
+{
+  const n = 900, p = new Float32Array(n * 3), c = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    p[i * 3] = Math.random() * 1600 - 80; p[i * 3 + 1] = -(Math.random() * 900 - 50); p[i * 3 + 2] = -5;
+    const b = .12 + Math.random() ** 3 * .45; c[i * 3] = c[i * 3 + 1] = b; c[i * 3 + 2] = b * 1.1;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(p, 3)); g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ size: 1.6, vertexColors: true, sizeAttenuation: false })));
+}
+
+// ---------- helpers ----------
+const lineMats = [];
+function line(points, color, width, opts = {}) {
+  const g = new LineGeometry(); g.setPositions(points.flatMap(p => [p.x, p.y, 0]));
+  const m = new LineMaterial({ color, linewidth: width, transparent: true, opacity: opts.opacity ?? 1, dashed: !!opts.dash, dashSize: opts.dash || 1, gapSize: opts.gap || 1, depthWrite: false });
+  lineMats.push(m);
+  const l = new Line2(g, m); l.computeLineDistances(); scene.add(l);
+  return l;
+}
+function setLine(l, points) { l.geometry.setPositions(points.flatMap(p => [p.x, p.y, 0])); l.computeLineDistances(); }
+// unit circles, scaled per frame (dash sizes are in unit-circle units)
+const circle = (n = 192) => Array.from({ length: n + 1 }, (_, i) => new THREE.Vector2(Math.cos(i / n * Math.PI * 2), Math.sin(i / n * Math.PI * 2)));
+const glowTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+  const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,255,255,.9)'); gr.addColorStop(.35, 'rgba(255,255,255,.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128); return new THREE.CanvasTexture(c);
+})();
+// No glows under the pieces: the camera reads a bright blob under a piece as another piece (feedback loop).
+const GLOWS = false;
+function glow(col, d, op = .6) {
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: col, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: op }));
+  s.scale.set(d, d, 1); if (GLOWS) scene.add(s); return s;
+}
+function ringMesh(r0, r1, col, op) {
+  const m = new THREE.Mesh(new THREE.RingGeometry(r0, r1, 96), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: op, depthWrite: false, blending: THREE.AdditiveBlending }));
+  scene.add(m); return m;
+}
+const W = (x, y) => new THREE.Vector2(x, -y);     // screen mm -> world
+let S = 1;                                         // px per mm
+const toPx = (x, y) => [(x - SW / 2) * S + innerWidth / 2, (y - SH / 2) * S + innerHeight / 2];
+function label(html, color) { const d = document.createElement('div'); d.className = 'lbl'; d.innerHTML = html; d.style.color = color || '#d8e6ff'; document.body.appendChild(d); return d; }
+function put(el, x, y) { const [px, py] = toPx(x, y); el.style.left = px + 'px'; el.style.top = py + 'px'; }
+
+// ---------- scene objects ----------
+const R_EARTH = R_E / KM;
+const earthHalo = glow(0x4fa8ff, BASE_MM.earth, .55);
+const geo = line(circle(), 0x8a909c, 1.2, { opacity: .3, dash: .03, gap: .03 });
+const geoLbl = label('GEO', 'rgba(170,176,188,.55)');
+const moonHalo = glow(0xdfe6f0, BASE_MM.moon, .35);
+const moonOrbit = line(circle(256), 0xb8c4d6, 1, { opacity: .22 });
+const moonSoi = line(circle(), 0xb8c4d6, 1, { opacity: .16, dash: .03, gap: .05 });
+const lagr = ['L1', 'L2', 'L3', 'L4', 'L5'].map(n => ({ n, mesh: (() => { const m = new THREE.Mesh(new THREE.PlaneGeometry(5, 5), new THREE.MeshBasicMaterial({ color: 0xa0a6b2, transparent: true, opacity: .5 })); m.rotation.z = Math.PI / 4; scene.add(m); return m; })(), lbl: label(n, 'rgba(170,176,188,.6)') }));
+const moonLbl = label('', 'rgba(216,230,255,.7)');
+const sat = {};
+for (const id of SATS) {
+  const col = new THREE.Color(ROLES[id].hex);
+  sat[id] = { col, halo: glow(col, BASE_MM[id], .35), orbit: line(circle(), col, 1.4, { opacity: .4 }), lbl: label('', ROLES[id].hex) };
+}
+const bases = {};
+for (const [k, d] of Object.entries(BASE_MM)) {
+  if (k === 'iss' && !SATS.includes('iss')) continue;
+  const col = new THREE.Color(0x8a93a3);           // base outlines: neutral grey for every piece
+  // thin dim outline only: a filled or bright disc under a piece confuses the camera
+  const fill = new THREE.Mesh(new THREE.CircleGeometry(d / 2, 96), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0, depthWrite: false }));
+  const edge = new THREE.Mesh(new THREE.RingGeometry(d / 2 - .8, d / 2, 128), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: .35, depthWrite: false }));
+  fill.position.z = edge.position.z = -2;           // base circles not drawn (kept for layout only)
+  bases[k] = { fill, edge };
+}
+const link = line([W(0, 0), W(1, 1)], 0xd6d9e0, 1.2, { opacity: .4 });
+const frame = line([W(0, 0), W(SW, 0), W(SW, SH), W(0, SH), W(0, 0)], 0x223044, 1, { opacity: .6 });
+
+// ---------- input: feed or demo ----------
+const pieces = {}, smooth = {};
+let feed = null, feedAt = -1e9;
+try { new EventSource('/events').onmessage = e => { try { feed = JSON.parse(e.data); feedAt = performance.now(); } catch {} }; } catch {}
+const online = () => performance.now() - feedAt < 1500;
+for (const [k, [x, y]] of Object.entries(DEMO)) pieces[k] = { x_mm: x, y_mm: y, seen_ago: 0 };
+
+let drag = null;
+const fromPx = (px, py) => [(px - innerWidth / 2) / S + SW / 2, (py - innerHeight / 2) / S + SH / 2];
+addEventListener('pointerdown', e => {
+  if (online() || calibrating) return;
+  const [x, y] = fromPx(e.clientX, e.clientY);
+  let best = null, bd = 60;
+  for (const [k, p] of Object.entries(smooth)) { const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = k; } }
+  drag = best;
+});
+addEventListener('pointermove', e => { if (drag) { const [x, y] = fromPx(e.clientX, e.clientY); Object.assign(pieces[drag], { x_mm: x, y_mm: y }); } });
+addEventListener('pointerup', () => drag = null);
+
+// ---------- calibration: ArUco markers drawn on the screen ----------
+let calibrating = false;
+const markers = () => {
+  const s = 80, m = 75;
+  return [[0, m, m], [1, SW - m, m], [2, SW - m, SH - m], [3, m, SH - m], [4, SW / 2, SH / 2]].map(([id, x, y]) => ({ id, x_mm: x, y_mm: y, size_mm: s }));
+};
+const cal = document.getElementById('cal'), calmsg = document.getElementById('calmsg');
+function drawMarkers() {
+  cal.querySelectorAll('img').forEach(i => i.remove());
+  for (const mk of markers()) {
+    const img = new Image(); img.src = `/marker/${mk.id}.png`;
+    const side = mk.size_mm * S, pad = mk.size_mm * .25 * S;   // PNG is the black square only; white quiet zone = padding
+    const [px, py] = toPx(mk.x_mm, mk.y_mm);
+    Object.assign(img.style, { width: side + 'px', height: side + 'px', padding: pad + 'px', left: (px - side / 2 - pad) + 'px', top: (py - side / 2 - pad) + 'px' });
+    cal.appendChild(img);
+  }
+}
+async function calibrate() {
+  if (calibrating) return;
+  calibrating = true; cal.style.display = 'block'; drawMarkers();
+  calmsg.textContent = 'CALIBRATING';
+  await new Promise(r => setTimeout(r, 900));
+  try {
+    const res = await (await fetch('/calibrate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ markers: markers() }) })).json();
+    calmsg.textContent = res.ok ? `CALIBRATED · ${res.markers_found} MARKERS · ${res.rms_mm.toFixed(1)} MM` : 'FAILED · ' + (res.error || '').toUpperCase();
+  } catch { calmsg.textContent = 'FAILED · NO DETECTOR'; }
+  await new Promise(r => setTimeout(r, 1800));
+  cal.style.display = 'none'; calibrating = false;
+}
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (k === 'c') calibrate();
+  if (k === 't') bgManual = !bgManual;
+  if (k === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+});
+
+// ---------- layout ----------
+function layout() {
+  const iw = innerWidth, ih = innerHeight;
+  renderer.setSize(iw, ih); composer.setSize(iw, ih); bloom.setSize(iw, ih);
+  for (const m of lineMats) m.resolution.set(iw, ih);
+  S = Math.min(iw / SW, ih / SH);
+  camera.left = SW / 2 - iw / (2 * S); camera.right = SW / 2 + iw / (2 * S);
+  camera.top = -SH / 2 + ih / (2 * S); camera.bottom = -SH / 2 - ih / (2 * S);
+  camera.updateProjectionMatrix();
+  setLine(frame, [W(0, 0), W(SW, 0), W(SW, SH), W(0, SH), W(0, 0)]);
+  const fs = Math.max(10, 4.5 * S) + 'px';
+  document.querySelectorAll('.lbl').forEach(l => l.style.fontSize = fs);
+  if (calibrating) drawMarkers();
+}
+addEventListener('resize', layout);
+layout();
+
+// ---------- frame ----------
+let last = performance.now();
+function tick(now) {
+  const dt = Math.min(.05, Math.max(0, (now - last) / 1000)); last = now;
+  const live = online();
+  if (live && feed) {
+    if (feed.screen_mm && (feed.screen_mm[0] !== SW || feed.screen_mm[1] !== SH)) { [SW, SH] = feed.screen_mm; layout(); }
+    for (const k of Object.keys(ROLES)) { const p = feed.pieces?.[k]; if (p) pieces[k] = p; else delete pieces[k]; }
+  }
+  document.getElementById('feed').style.background = document.getElementById('feed').style.color = live ? '#e6e8ec' : '#5c6270';
+  const rec = live && feed.rec?.recording ? `REC ${Math.floor(feed.rec.left_s / 60)}:${String(feed.rec.left_s % 60).padStart(2, '0')}` : '';
+  document.getElementById('note').textContent = !live ? 'NO FEED · DEMO' : feed.calibrated ? rec : 'UNCALIBRATED · PRESS C';
+  trainBg(now);
+  const a = 1 - Math.exp(-dt / .09);
+  for (const [k, p] of Object.entries(pieces)) {
+    if (!smooth[k]) smooth[k] = { x: p.x_mm, y: p.y_mm }; else { smooth[k].x += (p.x_mm - smooth[k].x) * a; smooth[k].y += (p.y_mm - smooth[k].y) * a; }
+  }
+  for (const k of Object.keys(smooth)) if (!pieces[k]) delete smooth[k];
+  const held = k => pieces[k] && pieces[k].seen_ago > .6;
+  const pulse = .5 + .5 * Math.sin(now / 700);
+
+  // base footprints
+  for (const [k, b] of Object.entries(bases)) {
+    const P = smooth[k]; b.fill.visible = b.edge.visible = !!P; if (!P) continue;
+    b.fill.position.x = b.edge.position.x = P.x; b.fill.position.y = b.edge.position.y = -P.y;
+    b.edge.material.opacity = held(k) ? .15 : .35;
+  }
+
+  // Earth
+  const E = smooth.earth;
+  for (const o of [earthHalo, geo]) o.visible = !!E;
+  geoLbl.style.display = E ? '' : 'none';
+  if (E) {
+    earthHalo.position.set(E.x, -E.y, -1);
+    earthHalo.material.opacity = held('earth') ? .2 : .5;
+    geo.position.set(E.x, -E.y, 0); geo.scale.setScalar(GEO / KM);
+    put(geoLbl, E.x, E.y - GEO / KM - 7);
+  }
+
+  // Moon: orbit about Earth, sphere of influence, Lagrange points of this Earth–Moon pair
+  const M = smooth.moon;
+  moonHalo.visible = !!M; moonSoi.visible = !!M;
+  moonOrbit.visible = !!(E && M); moonLbl.style.display = E && M ? '' : 'none';
+  if (M) {
+    moonHalo.position.set(M.x, -M.y, -1);
+    moonSoi.position.set(M.x, -M.y, 0); moonSoi.scale.setScalar(MOON_SOI / KM);
+  }
+  for (const L of lagr) { L.mesh.visible = !!(E && M); L.lbl.style.display = E && M ? '' : 'none'; }
+  if (E && M) {
+    const dx = M.x - E.x, dy = M.y - E.y, d = Math.hypot(dx, dy), ux = dx / d, uy = dy / d;
+    moonOrbit.position.set(E.x, -E.y, 0); moonOrbit.scale.setScalar(d);
+    const at = (along, side) => [E.x + (ux * along - uy * side) * d, E.y + (uy * along + ux * side) * d];
+    const pts = { L1: at(.849, 0), L2: at(1.168, 0), L3: at(-.993, 0), L4: at(.5, -.866), L5: at(.5, .866) };
+    for (const L of lagr) { const [x, y] = pts[L.n]; L.mesh.position.set(x, -y, 0); put(L.lbl, x, y + 5); }
+    moonLbl.innerHTML = `${Math.round(d * KM).toLocaleString()} km`;
+    put(moonLbl, M.x, M.y + BASE_MM.moon / 2 + 3);
+  }
+
+  // satellites: orbit about the body whose sphere of influence they're in
+  for (const id of SATS) {
+    const s = sat[id], P = smooth[id];
+    const on = !!P;
+    s.halo.visible = on; s.lbl.style.display = on ? '' : 'none';
+    s.orbit.visible = on && !!(E || M);
+    if (!on) continue;
+    const h = held(id);
+    s.halo.position.set(P.x, -P.y, -1);
+    s.halo.material.opacity = h ? .05 : .12 + .06 * pulse;
+    let body = null, rBody = R_E;
+    if (M && Math.hypot(P.x - M.x, P.y - M.y) < MOON_SOI / KM) { body = M; rBody = R_M; } else if (E) body = E;
+    const alt = body ? Math.max(0, Math.hypot(P.x - body.x, P.y - body.y) * KM - rBody) : null;
+    if (body) {
+      s.orbit.position.set(body.x, -body.y, 0); s.orbit.scale.setScalar(Math.hypot(P.x - body.x, P.y - body.y));
+      s.orbit.material.opacity = h ? .12 : .4;
+    }
+    s.lbl.innerHTML = `${ROLES[id].name}` + (alt != null ? `<small>${Math.round(alt).toLocaleString()} km${body === M ? ' · LUNAR' : ''}</small>` : '');
+    s.lbl.style.opacity = h ? .4 : 1;
+    put(s.lbl, P.x, P.y + BASE_MM[id] / 2 + 3);
+  }
+
+  // Seldon crosslink: red when Earth or the Moon is in the way
+  const A = smooth['seldon-1'], B = smooth['seldon-2'];
+  link.visible = !!(A && B);
+  if (A && B) {
+    const blockedBy = (C, r) => {
+      if (!C) return false;
+      const abx = B.x - A.x, aby = B.y - A.y, t = Math.max(0, Math.min(1, ((C.x - A.x) * abx + (C.y - A.y) * aby) / (abx * abx + aby * aby)));
+      return Math.hypot(A.x + abx * t - C.x, A.y + aby * t - C.y) < r / KM;
+    };
+    const blocked = blockedBy(E, R_E) || blockedBy(M, R_M);
+    setLine(link, [W(A.x, A.y), W(B.x, B.y)]);
+    link.material.color.set(blocked ? 0x5c6270 : 0xd6d9e0);   // white link, dim grey when blocked
+    link.material.opacity = blocked ? .2 : .4;
+  }
+
+  composer.render();
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

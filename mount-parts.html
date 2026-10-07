@@ -1,0 +1,336 @@
+<title>Ops Table Mount Kit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  /* Layout: drafting sheet. Full-width section drawing, then detail drawings (sticky on desktop) beside the part list */
+  --paper:#eef1f3; --sheet:#f9fbfc; --ink:#17212b; --line:#3b4a58; --muted:#5b6977; --rule:#d5dce2;
+  --accent:#c9460f; --accent-soft:rgba(201,70,15,.16);
+  --steel:#b7c0c8; --alu:#dde3e8; --rubber:#2a2e33; --nutc:#8e99a3; --nylon:#3a7bd5; --tv:#26303a; --on-tv:#dfe7ee; --screen:#4f8fb8;
+  --f-display:"Barlow Condensed","Arial Narrow",sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0d151e; --sheet:#132030; --ink:#e3eaf0; --line:#9db0c1; --muted:#8c9dad; --rule:#24364a;
+  --accent:#ff8a4c; --accent-soft:rgba(255,138,76,.2);
+  --steel:#4b5b6a; --alu:#6f808e; --rubber:#07090b; --nutc:#5d6c79; --nylon:#6aa5ff; --tv:#1b252f; --on-tv:#c9d5df; --screen:#3b7aa3;
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0d151e; --sheet:#132030; --ink:#e3eaf0; --line:#9db0c1; --muted:#8c9dad; --rule:#24364a;
+  --accent:#ff8a4c; --accent-soft:rgba(255,138,76,.2);
+  --steel:#4b5b6a; --alu:#6f808e; --rubber:#07090b; --nutc:#5d6c79; --nylon:#6aa5ff; --tv:#1b252f; --on-tv:#c9d5df; --screen:#3b7aa3;
+  color-scheme:dark}
+body{background:var(--paper);color:var(--ink);font:15px/1.55 var(--f-body)}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:16px;padding-block:28px 48px;display:grid;gap:22px}
+header{display:grid;gap:6px;max-width:68ch}
+.eyebrow{font:500 11px var(--f-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+h1{font:700 clamp(30px,5vw,44px)/1 var(--f-display);letter-spacing:.01em;margin:0;text-transform:uppercase;text-wrap:balance}
+header p{margin:0;color:var(--muted)}
+h2{font:600 22px/1.1 var(--f-display);text-transform:uppercase;letter-spacing:.03em;margin:0}
+figure{margin:0;background:var(--sheet);border:1px solid var(--rule);display:grid;gap:8px;padding:14px;min-width:0}
+figcaption{font-size:13px;color:var(--muted)}
+.fig-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline}
+.fig-id{font:500 11px var(--f-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.scroll{overflow-x:auto}
+svg.dwg{display:block;width:100%;height:auto}
+svg.wide{min-width:620px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font:12px var(--f-mono);color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:14px;height:10px;border:1px solid var(--line);display:inline-block}
+.main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;align-items:start}
+.details{display:grid;gap:16px;position:sticky;top:calc(12px + env(safe-area-inset-top,0px))}
+@media (max-width:860px){.main{grid-template-columns:1fr}.details{position:static}}
+
+/* drawing styles */
+.pt{stroke:var(--line);stroke-width:1.2;transition:opacity .15s,stroke .15s;cursor:pointer}
+.steel{fill:var(--steel)} .alu{fill:var(--alu)} .rubber{fill:var(--rubber)} .nut{fill:var(--nutc)}
+.nylon{fill:var(--nylon)} .tv{fill:var(--tv)} .screen{fill:var(--screen);stroke:none}
+.hatch{fill:url(#hatch)}
+.future{fill:none;stroke:var(--muted);stroke-dasharray:6 5;stroke-width:1.2}
+.floor{stroke:var(--line);stroke-width:1.5}
+.lead{stroke:var(--muted);stroke-width:1;fill:none}
+.dim{stroke:var(--muted);stroke-width:1}
+.t{font:12.5px var(--f-body);fill:var(--ink)}
+.t.m{fill:var(--muted)}
+.t.ontv{fill:var(--on-tv)}
+.t.b{font-weight:600}
+.tag circle{fill:var(--ink)}
+.tag text{font:600 11px var(--f-mono);fill:var(--sheet);text-anchor:middle;dominant-baseline:central}
+.hatchline{stroke:var(--line);stroke-width:1}
+svg.dim-on .pt{opacity:.28}
+svg.dim-on .pt.hot{opacity:1;stroke:var(--accent);stroke-width:2.2}
+
+/* part list */
+.groups{display:grid;gap:22px;min-width:0}
+.group{display:grid;gap:10px}
+.group-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;border-bottom:2px solid var(--ink);padding-bottom:6px}
+.group-head small{font:12px var(--f-mono);color:var(--muted)}
+ul.parts{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.part{background:var(--sheet);border:1px solid var(--rule);padding:10px 14px;display:grid;gap:4px;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.part.on{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.pick{all:unset;display:flex;gap:10px;align-items:baseline;cursor:pointer;font-weight:600}
+.pick:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+.no{font:600 12px var(--f-mono);min-width:26px;height:22px;display:inline-grid;place-items:center;background:var(--ink);color:var(--sheet);flex:none}
+.part.on .no{background:var(--accent)}
+.row{display:flex;justify-content:space-between;gap:4px 14px;flex-wrap:wrap;padding-left:36px}
+.does{color:var(--muted);font-size:14px}
+.meta{font:12.5px var(--f-mono);color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.note{font-size:13px;color:var(--muted);margin:0}
+.totals{display:flex;flex-wrap:wrap;gap:6px 20px;font:13px var(--f-mono);border-top:2px solid var(--ink);padding-top:10px;font-variant-numeric:tabular-nums}
+.totals b{font-weight:500;color:var(--ink)}
+@media (prefers-reduced-motion:reduce){.pt,.part{transition:none}}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">65″ Insignia QF · Uline H-5785S table</div>
+    <h1>Ops Table Mount Kit</h1>
+    <p>Tap a part to find it in the drawings.</p>
+  </header>
+
+  <figure>
+    <div class="fig-head"><h2>Section through the table</h2><span class="fig-id">Fig. 1 · front view, heights exaggerated</span></div>
+    <div class="scroll">
+    <svg class="dwg wide" viewBox="0 0 900 370" role="img" aria-label="Cross-section: TV face-up on four spacers bolted through the steel tabletop, with swivel feet supporting its edges">
+      <defs>
+        <pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect width="7" height="7" style="fill:var(--steel)"/>
+          <line x1="0" y1="0" x2="0" y2="7" class="hatchline"/>
+        </pattern>
+      </defs>
+      <rect x="66" y="108" width="768" height="7" class="future"/>
+      <rect x="60" y="108" width="6" height="92" class="future"/>
+      <rect x="834" y="108" width="6" height="92" class="future"/>
+      <text x="834" y="98" class="t m" text-anchor="end">Glass + rim: next phase</text>
+
+      <g class="pt steel" data-p="2">
+        <rect x="60" y="200" width="780" height="14"/>
+        <rect x="60" y="200" width="8" height="30"/>
+        <rect x="832" y="200" width="8" height="30"/>
+        <rect x="104" y="214" width="14" height="112"/>
+        <rect x="782" y="214" width="14" height="112"/>
+        <rect x="118" y="292" width="664" height="5"/>
+        <rect x="118" y="284" width="4" height="8"/>
+        <rect x="778" y="284" width="4" height="8"/>
+        <rect x="98" y="326" width="26" height="6"/>
+        <rect x="776" y="326" width="26" height="6"/>
+        <circle cx="111" cy="342" r="10"/>
+        <circle cx="789" cy="342" r="10"/>
+      </g>
+      <line x1="20" y1="352" x2="880" y2="352" class="floor"/>
+      <text x="450" y="316" class="t m" text-anchor="middle">Bottom shelf (PC, power strip)</text>
+
+      <g class="pt" data-p="1">
+        <path class="tv" d="M110,128 H790 V150 H640 L600,168 H300 L260,150 H110 Z"/>
+        <rect x="114" y="128" width="672" height="4" class="screen"/>
+      </g>
+      <g class="tag"><circle cx="330" cy="146" r="10"/><text x="330" y="146">1</text></g>
+      <text x="346" y="150" class="t ontv b">65″ TV, lying face-up</text>
+
+      <g id="stackA">
+        <rect class="pt steel" data-p="4" x="397" y="160" width="6" height="58"/>
+        <rect class="pt rubber" data-p="7" x="389" y="168" width="22" height="3"/>
+        <rect class="pt alu" data-p="5" x="392" y="171" width="16" height="29"/>
+        <rect class="pt steel" data-p="6" x="387" y="214" width="26" height="3"/>
+        <rect class="pt nut" data-p="4" x="391" y="217" width="18" height="8"/>
+      </g>
+      <use href="#stackA" x="100"/>
+
+      <g id="footA">
+        <rect class="pt steel" data-p="8" x="187.5" y="165" width="5" height="72"/>
+        <rect class="pt rubber" data-p="8" x="172" y="150" width="36" height="5"/>
+        <path class="pt steel" data-p="8" d="M175,155 H205 L201,165 H179 Z"/>
+        <rect class="pt nut" data-p="10" x="182" y="189" width="16" height="8"/>
+        <rect class="pt steel" data-p="11" x="179" y="197" width="22" height="3"/>
+        <rect class="pt steel" data-p="11" x="179" y="214" width="22" height="3"/>
+        <rect class="pt nut" data-p="9" x="182" y="217" width="16" height="9"/>
+        <rect class="pt nylon" data-p="9" x="182" y="223" width="16" height="3"/>
+      </g>
+      <use href="#footA" x="520"/>
+
+      <line x1="560" y1="168" x2="560" y2="200" class="dim"/>
+      <line x1="554" y1="168" x2="566" y2="168" class="dim"/>
+      <line x1="554" y1="200" x2="566" y2="200" class="dim"/>
+      <text x="570" y="189" class="t m">1″ air gap</text>
+
+      <path class="lead" d="M400,228 L430,262 M500,228 L470,262"/>
+      <text x="450" y="278" class="t b" text-anchor="middle">4–7 · Center mount ×4</text>
+      <path class="lead" d="M190,238 L190,262"/>
+      <text x="190" y="278" class="t b" text-anchor="middle">8–11 · Edge support ×8</text>
+      <path class="lead" d="M782,272 L752,272"/>
+      <g class="tag"><circle cx="738" cy="272" r="10"/><text x="738" y="272">2</text></g>
+      <text x="722" y="276" class="t b" text-anchor="end">Steel table</text>
+    </svg>
+    </div>
+    <div class="legend" aria-label="Materials">
+      <span><i style="background:var(--steel)"></i>Steel</span>
+      <span><i style="background:var(--alu)"></i>Aluminum</span>
+      <span><i style="background:var(--rubber)"></i>Rubber</span>
+      <span><i style="background:var(--nutc)"></i>Nuts / bolt head</span>
+      <span><i style="background:var(--nylon)"></i>Nylon lock insert</span>
+    </div>
+  </figure>
+
+  <div class="main">
+    <div class="details">
+      <figure>
+        <div class="fig-head"><h2>Center mount</h2><span class="fig-id">Fig. 2 · ×4</span></div>
+        <svg class="dwg" viewBox="0 0 460 270" role="img" aria-label="Bolt stack: bolt head, fender washer, tabletop, one-inch spacer, rubber washer, into the TV's threaded insert">
+          <rect class="pt tv" data-p="1" x="30" y="20" width="400" height="64"/>
+          <rect class="pt nut" data-p="1" x="196" y="44" width="48" height="40"/>
+          <text x="44" y="44" class="t ontv b">TV back</text>
+          <text x="44" y="70" class="t ontv">≈9 mm of thread in the TV</text>
+          <rect class="pt steel" data-p="4" x="210" y="52" width="20" height="144"/>
+          <rect class="pt rubber" data-p="7" x="176" y="84" width="34" height="6"/>
+          <rect class="pt rubber" data-p="7" x="230" y="84" width="34" height="6"/>
+          <rect class="pt alu" data-p="5" x="188" y="90" width="22" height="90"/>
+          <rect class="pt alu" data-p="5" x="230" y="90" width="22" height="90"/>
+          <rect class="pt hatch" data-p="2" x="30" y="180" width="174" height="10"/>
+          <rect class="pt hatch" data-p="2" x="236" y="180" width="194" height="10"/>
+          <rect class="pt steel" data-p="6" x="168" y="190" width="42" height="6"/>
+          <rect class="pt steel" data-p="6" x="230" y="190" width="42" height="6"/>
+          <rect class="pt nut" data-p="4" x="190" y="196" width="60" height="24"/>
+
+          <path class="lead" d="M264,87 L290,100"/>
+          <text x="294" y="104" class="t"><tspan class="b">7</tspan> · Rubber washer</text>
+          <path class="lead" d="M252,135 L290,135"/>
+          <text x="294" y="139" class="t"><tspan class="b">5</tspan> · 1″ spacer</text>
+          <path class="lead" d="M330,190 L330,206"/>
+          <text x="294" y="222" class="t"><tspan class="b">2</tspan> · Tabletop</text>
+          <path class="lead" d="M168,193 L132,214"/>
+          <text x="30" y="226" class="t"><tspan class="b">6</tspan> · Fender washer</text>
+          <path class="lead" d="M190,214 L150,244"/>
+          <text x="30" y="256" class="t"><tspan class="b">4</tspan> · M6 × 40 bolt</text>
+        </svg>
+        <figcaption>Snug plus a quarter turn. Don't crank it.</figcaption>
+      </figure>
+
+      <figure>
+        <div class="fig-head"><h2>Edge support</h2><span class="fig-id">Fig. 3 · ×8 · optional</span></div>
+        <svg class="dwg" viewBox="0 0 460 290" role="img" aria-label="Swivel foot installed upside down: rubber pad touching the TV back, stud through the tabletop clamped by a nut and washer above and a lock nut and washer below">
+          <rect class="pt tv" data-p="1" x="30" y="20" width="400" height="40"/>
+          <text x="44" y="45" class="t ontv b">TV back, near the edge</text>
+          <rect class="pt steel" data-p="8" x="212" y="104" width="16" height="176"/>
+          <rect class="pt rubber" data-p="8" x="160" y="60" width="120" height="14"/>
+          <path class="pt steel" data-p="8" d="M170,74 H270 L252,98 H188 Z"/>
+          <circle class="pt steel" data-p="8" cx="220" cy="104" r="10"/>
+          <rect class="pt nut" data-p="10" x="190" y="154" width="60" height="20"/>
+          <rect class="pt steel" data-p="11" x="180" y="174" width="32" height="6"/>
+          <rect class="pt steel" data-p="11" x="228" y="174" width="32" height="6"/>
+          <rect class="pt hatch" data-p="2" x="30" y="180" width="176" height="10"/>
+          <rect class="pt hatch" data-p="2" x="234" y="180" width="196" height="10"/>
+          <rect class="pt steel" data-p="11" x="180" y="190" width="32" height="6"/>
+          <rect class="pt steel" data-p="11" x="228" y="190" width="32" height="6"/>
+          <rect class="pt nut" data-p="9" x="190" y="196" width="60" height="24"/>
+          <rect class="pt nylon" data-p="9" x="190" y="212" width="60" height="8"/>
+
+          <path class="lead" d="M280,67 L294,67"/>
+          <text x="298" y="66" class="t"><tspan class="b">8</tspan> · Swivel foot,</text>
+          <text x="298" y="82" class="t">upside down</text>
+          <text x="40" y="100" class="t m">Just touches the TV</text>
+          <path class="lead" d="M250,164 L294,164"/>
+          <text x="298" y="168" class="t"><tspan class="b">10</tspan> · Hex nut</text>
+          <path class="lead" d="M260,193 L294,202"/>
+          <text x="298" y="206" class="t"><tspan class="b">11</tspan> · Washers</text>
+          <path class="lead" d="M250,214 L294,238"/>
+          <text x="298" y="242" class="t"><tspan class="b">9</tspan> · Lock nut</text>
+          <path class="dim" d="M160,140 V186 M154,146 L160,140 L166,146 M154,180 L160,186 L166,180"/>
+          <text x="40" y="168" class="t m">Sets height</text>
+        </svg>
+        <figcaption>Only if the TV's edges sag after bolting.</figcaption>
+      </figure>
+    </div>
+
+    <div class="groups">
+      <section class="group" aria-labelledby="g1">
+        <div class="group-head"><h2 id="g1">Main pieces</h2><small>$935–$985 + freight</small></div>
+        <ul class="parts">
+          <li class="part" data-p="1">
+            <button class="pick" aria-pressed="false"><span class="no">1</span><span>Insignia 65″ QF TV, NS65-UQFL26</span></button>
+            <div class="row"><span class="does">The display, face-up</span><span class="meta">1 · $300–$350</span></div>
+          </li>
+          <li class="part" data-p="2">
+            <button class="pick" aria-pressed="false"><span class="no">2</span><span>Uline H-5785S steel table with bottom shelf, 60×36</span></button>
+            <div class="row"><span class="does">The base; shelf holds the PC</span><span class="meta">1 · $635 + freight</span></div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="group" aria-labelledby="g2">
+        <div class="group-head"><h2 id="g2">Center mount</h2><small>×4 · ~$22</small></div>
+        <ul class="parts">
+          <li class="part" data-p="4">
+            <button class="pick" aria-pressed="false"><span class="no">4</span><span>M6 × 40mm stainless hex bolt</span></button>
+            <div class="row"><span class="does">Clamps the TV to the table</span><span class="meta">6 · ~$4</span></div>
+          </li>
+          <li class="part" data-p="5">
+            <button class="pick" aria-pressed="false"><span class="no">5</span><span>Aluminum spacer, ¼″ ID × 1″</span></button>
+            <div class="row"><span class="does">Holds the TV up, carries its weight</span><span class="meta">1 pack · ~$10</span></div>
+          </li>
+          <li class="part" data-p="6">
+            <button class="pick" aria-pressed="false"><span class="no">6</span><span>M6 stainless fender washer</span></button>
+            <div class="row"><span class="does">Covers the hole under the table</span><span class="meta">4 · ~$2</span></div>
+          </li>
+          <li class="part" data-p="7">
+            <button class="pick" aria-pressed="false"><span class="no">7</span><span>Rubber washer, M6</span></button>
+            <div class="row"><span class="does">Protects the TV's back</span><span class="meta">1 pack · ~$6</span></div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="group" aria-labelledby="g3">
+        <div class="group-head"><h2 id="g3">Edge supports</h2><small>×8 · optional · ~$31</small></div>
+        <ul class="parts">
+          <li class="part" data-p="8">
+            <button class="pick" aria-pressed="false"><span class="no">8</span><span>M8 swivel leveling foot, 2″ base, 50mm stud</span></button>
+            <div class="row"><span class="does">Props up the TV's edges</span><span class="meta">8 · ~$23</span></div>
+          </li>
+          <li class="part" data-p="9">
+            <button class="pick" aria-pressed="false"><span class="no">9</span><span>M8 nylon-insert lock nut</span></button>
+            <div class="row"><span class="does">Locks the foot's height</span><span class="meta">8 · ~$3</span></div>
+          </li>
+          <li class="part" data-p="10">
+            <button class="pick" aria-pressed="false"><span class="no">10</span><span>M8 hex nut</span></button>
+            <div class="row"><span class="does">Sets the foot's height</span><span class="meta">8 · ~$2</span></div>
+          </li>
+          <li class="part" data-p="11">
+            <button class="pick" aria-pressed="false"><span class="no">11</span><span>M8 flat washer</span></button>
+            <div class="row"><span class="does">Protects the table finish</span><span class="meta">16 · ~$3</span></div>
+          </li>
+        </ul>
+      </section>
+
+      <div class="totals">
+        <span>Total: <b>~$990–$1,040</b> + freight</span>
+      </div>
+      <p class="note">#3 (screw kit) dropped: the manual confirms M6.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var current = null;
+  var parts = Array.prototype.slice.call(document.querySelectorAll('.part'));
+  var svgs = document.querySelectorAll('svg.dwg');
+  function setActive(p, fromDrawing){
+    current = (current === p) ? null : p;
+    svgs.forEach(function(s){ s.classList.toggle('dim-on', !!current); });
+    document.querySelectorAll('.pt').forEach(function(e){ e.classList.toggle('hot', e.getAttribute('data-p') === current); });
+    parts.forEach(function(li){
+      var on = li.getAttribute('data-p') === current;
+      li.classList.toggle('on', on);
+      li.querySelector('.pick').setAttribute('aria-pressed', String(on));
+      if (on && fromDrawing) li.scrollIntoView({block:'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
+    });
+  }
+  parts.forEach(function(li){
+    li.addEventListener('click', function(){ setActive(li.getAttribute('data-p'), false); });
+  });
+  document.querySelectorAll('.pt').forEach(function(el){
+    el.addEventListener('click', function(e){ e.stopPropagation(); setActive(el.getAttribute('data-p'), true); });
+  });
+})();
+</script>

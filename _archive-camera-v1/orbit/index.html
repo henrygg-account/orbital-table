@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cislunar Live Track</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Michroma&display=swap">
+<style>
+  html,body { margin:0; height:100%; background:#02050a; overflow:hidden; cursor:crosshair; }
+  canvas { display:block; width:100vw; height:100vh; }
+  #hint { position:fixed; right:16px; bottom:12px; font:11px "JetBrains Mono",monospace; color:#4d6876; letter-spacing:.08em; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">v4 · F fullscreen · G grid · drag pieces when the tracker is offline</div>
+<script>
+// =====================================================================
+// Board = a fixed Earth–Moon map. Tracked pieces = spacecraft.
+// Placing a piece puts a spacecraft there on its natural circular orbit;
+// the page propagates it with the circular restricted three-body problem
+// and reports region, cost, sensor custody and closest approach.
+// =====================================================================
+const CRAFT = [
+  { piece: 'blue',   id: 'BLUE-1',   side: 'FRIENDLY',  col: [79, 216, 255] },
+  { piece: 'purple', id: 'PURPLE-1', side: 'ADVERSARY', col: [199, 125, 255] },
+];
+// Other piece sets fill the same two roles: the craft takes the look of whichever piece the feed reports.
+const ALIASES = [
+  [{ piece: 'blue', id: 'BLUE-1', col: [79, 216, 255] }, { piece: 'green', id: 'GREEN-1', col: [90, 255, 140] }],
+  [{ piece: 'purple', id: 'PURPLE-1', col: [199, 125, 255] }, { piece: 'red', id: 'RED-1', col: [255, 90, 90] }],
+];
+const MAP = { earthU: .2, earthV: .52, span: .58 };   // Earth position and Earth–Moon distance as fractions of board width
+const MU = 0.01215, KM = 384400, TU_H = 104.36;       // mass ratio, distance unit (km), time unit (hours)
+const R_E = 6371 / KM, R_M = 1737 / KM, HILL_M = 0.12;
+const HORIZON = 6 * 24 / TU_H;                        // propagate 6 days
+const SENSOR_KM = 100000;
+const LPTS = { L1: [0.836915, 0], L2: [1.155682, 0], L3: [-1.005063, 0], L4: [0.5 - MU, 0.8660254], L5: [0.5 - MU, -0.8660254] };
+const C_LEVELS = [{ c: 3.20034, a: .32 }, { c: 3.18416, a: .26 }, { c: 3.10, a: .12 }, { c: 3.02415, a: .2 }];
+
+const cv = document.getElementById('c'), g = cv.getContext('2d');
+let W, H, R, F, stars = [], contours = [], boardKey = '48,36';
+const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+const CYAN = [79, 216, 255], AMBER = [255, 177, 59], RED = [255, 77, 77];
+
+// ---- layout: board rect on screen, fixed rotating frame ----
+function layout() {
+  const DPR = Math.min(devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight; cv.width = W * DPR; cv.height = H * DPR; g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const [bw, bh] = feed.board_in || [48, 36], ar = bw / bh;
+  let w = W, h = W / ar; if (h > H) { h = H; w = H * ar; }
+  R = { x: (W - w) / 2, y: (H - h) / 2, w, h };
+  const D = MAP.span * R.w, ex = R.x + MAP.earthU * R.w, ey = R.y + MAP.earthV * R.h;
+  F = { D, B: [ex + MU * D, ey] };   // x axis → right (toward Moon), y axis → up
+  stars = Array.from({ length: 300 }, () => [Math.random() * W, Math.random() * H, Math.random() * 1.3 + .2, Math.random() * 6]);
+  buildContours();
+  for (const c of CRAFT) { c.key = ''; c.init = false; c.trail = []; }
+}
+const toS = (x, y) => [F.B[0] + F.D * x, F.B[1] - F.D * y];
+const fromS = (sx, sy) => [(sx - F.B[0]) / F.D, -(sy - F.B[1]) / F.D];
+const kmPerPx = () => KM / F.D;
+
+// ---- feed ----
+let feed = { pieces: {}, grid: [8, 6], board_in: [48, 36], age: null }, online = false, feedAt = -1e9;
+const pendingEvents = [];
+try {
+  new EventSource('/events').onmessage = e => {
+    try {
+      const m = JSON.parse(e.data);
+      if (!m || typeof m !== 'object') return;
+      for (const ev of (Array.isArray(m.events) ? m.events : [])) pendingEvents.push(ev);
+      if (pendingEvents.length > 200) pendingEvents.splice(0, pendingEvents.length - 200);
+      feed = m; feedAt = performance.now();
+    } catch (err) {}
+  };
+} catch (e) {}
+
+// ---- physics ----
+function acc(x, y, vx, vy) {
+  const r1 = Math.hypot(x + MU, y), r2 = Math.hypot(x - 1 + MU, y), a = (1 - MU) / r1 ** 3, b = MU / r2 ** 3;
+  return [2 * vy + x - a * (x + MU) - b * (x - 1 + MU), -2 * vx + y - a * y - b * y, r1, r2];
+}
+// Circular prograde orbit about the dominant body, expressed in the rotating frame
+function initialState(x, y) {
+  const toMoon = Math.hypot(x - 1 + MU, y) < HILL_M;
+  const [cx, cy, gm] = toMoon ? [1 - MU, 0, MU] : [-MU, 0, 1 - MU];
+  const px = x - cx, py = y - cy, r = Math.hypot(px, py), k = Math.sqrt(gm / r) / r - 1;
+  return [x, y, -py * k, px * k];
+}
+function propagate(x, y) {
+  let s = initialState(x, y), t = 0, next = 0;
+  const T = [], X = [], Y = [];
+  let impact = null;
+  while (t < HORIZON) {
+    if (t >= next) { T.push(t); X.push(s[0]); Y.push(s[1]); next += .0025; }
+    const [, , r1, r2] = acc(...s);
+    if (r1 < R_E) { impact = 'EARTH'; break; }
+    if (r2 < R_M) { impact = 'LUNA'; break; }
+    const h = Math.min(2e-3, Math.max(3e-6, .012 * Math.min(r1, r2) ** 1.5));
+    const f = (st) => { const [ax, ay] = acc(...st); return [st[2], st[3], ax, ay]; };
+    const k1 = f(s), k2 = f(s.map((v, i) => v + h / 2 * k1[i])), k3 = f(s.map((v, i) => v + h / 2 * k2[i])), k4 = f(s.map((v, i) => v + h * k3[i]));
+    s = s.map((v, i) => v + h / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]));
+    t += h;
+  }
+  T.push(t); X.push(s[0]); Y.push(s[1]);
+  return { T, X, Y, impact };
+}
+function haloPath(name, x0, y0) {
+  const [lx] = LPTS[name], T = [], X = [], Y = [], per = 14 * 24 / TU_H;
+  const ph = Math.atan2((y0) / .055, (x0 - lx) / .018);
+  for (let t = 0; t <= HORIZON; t += .0025) { const a = ph + t / per * Math.PI * 2; T.push(t); X.push(lx + .018 * Math.cos(a)); Y.push(.055 * Math.sin(a)); }
+  return { T, X, Y, impact: null };
+}
+const at = (tr, t) => {           // linear interpolation along a trajectory
+  if (t >= tr.T[tr.T.length - 1]) return [tr.X[tr.X.length - 1], tr.Y[tr.Y.length - 1]];
+  let i = Math.min(tr.T.length - 2, Math.floor(t / .0025)); while (i > 0 && tr.T[i] > t) i--; while (tr.T[i + 1] < t) i++;
+  const f = (t - tr.T[i]) / (tr.T[i + 1] - tr.T[i] || 1);
+  return [tr.X[i] + (tr.X[i + 1] - tr.X[i]) * f, tr.Y[i] + (tr.Y[i + 1] - tr.Y[i]) * f];
+};
+
+// ---- region, cost ----
+const MU_E = 398600, R_LEO = 6778;
+function hohmann(r1, r2) {
+  const a = (r1 + r2) / 2, v1 = Math.sqrt(MU_E / r1), v2 = Math.sqrt(MU_E / r2);
+  return { dv: Math.abs(v1 * (Math.sqrt(r2 / a) - 1)) + Math.abs(v2 * (1 - Math.sqrt(r1 / a))), tof: Math.PI * Math.sqrt(a ** 3 / MU_E) / 3600 };
+}
+function classify(x, y) {
+  const dE = Math.hypot(x + MU, y) * KM, dM = Math.hypot(x - 1 + MU, y) * KM;
+  for (const n of ['L1', 'L2']) if (Math.hypot(x - LPTS[n][0], y - LPTS[n][1]) < .04) return { region: `${n} HALO ORBIT`, halo: n, dv: n === 'L1' ? 3.77 : 3.43, tof: n === 'L1' ? 96 : 110, approx: true, dE, dM };
+  for (const n of ['L4', 'L5']) if (Math.hypot(x - LPTS[n][0], y - LPTS[n][1]) < .07) return { region: `${n} TROJAN`, dv: 3.97, tof: 140, approx: true, dE, dM };
+  if (dE < 6371) return { region: 'SURFACE — LAUNCH SITE', dv: 0, tof: 0, dE, dM, ground: true };
+  if (dM < 1737) return { region: 'LUNAR SURFACE', dv: 5.9, tof: 100, approx: true, dE, dM, ground: true };
+  if (dM < HILL_M * KM) return { region: 'LUNAR ORBIT', dv: 4.04, tof: 100, approx: true, dE, dM, alt: dM - 1737 };
+  const h = hohmann(R_LEO, dE);
+  const region = dE < 8371 ? 'LEO' : dE < 39000 ? 'MEO' : dE < 48000 ? 'GEO BELT' : dE < 150000 ? 'HIGH EARTH ORBIT' : 'CISLUNAR SPACE';
+  return { region, dv: h.dv, tof: h.tof, dE, dM, alt: dE - 6371 };
+}
+
+// ---- pieces: tracker or mouse (demo) ----
+for (const [i, c] of CRAFT.entries()) Object.assign(c, { u: [.42, .66][i], v: [.3, .7][i], sx: 0, sy: 0, vx: 0, vy: 0, speed: 0, init: false, on: true, held: false, state: 'tracked', trail: [], jumpAt: -99, orbCell: '', kx: 0, ky: 0, seen: 0, cell: '—', key: '', ping: -9, lastCell: '' });
+let drag = null;
+cv.addEventListener('pointerdown', e => { if (!online) drag = CRAFT.find(c => Math.hypot(e.clientX - c.sx, e.clientY - c.sy) < 40) || null; });
+addEventListener('pointermove', e => { if (drag) { drag.u = (e.clientX - R.x) / R.w; drag.v = (e.clientY - R.y) / R.h; } });
+addEventListener('pointerup', () => drag = null);
+let showGrid = true;
+addEventListener('keydown', e => {
+  if (e.key === 'f' || e.key === 'F') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.().catch(() => {});
+  if (e.key === 'g' || e.key === 'G') showGrid = !showGrid;
+});
+addEventListener('resize', layout);
+
+// ---- static backdrop: zero-velocity curves ----
+const twoOmega = (x, y) => { const r1 = Math.hypot(x + MU, y) + 1e-6, r2 = Math.hypot(x - 1 + MU, y) + 1e-6; return x * x + y * y + 2 * (1 - MU) / r1 + 2 * MU / r2; };
+function buildContours() {
+  const step = 8, nx = Math.ceil(W / step) + 1, ny = Math.ceil(H / step) + 1, f = new Float32Array(nx * ny);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) f[j * nx + i] = twoOmega(...fromS(i * step, j * step));
+  contours = C_LEVELS.map(({ c, a }) => {
+    const p = new Path2D();
+    for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx - 1; i++) {
+      const v = [f[j * nx + i], f[j * nx + i + 1], f[(j + 1) * nx + i + 1], f[(j + 1) * nx + i]], P = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]], pts = [];
+      for (let k = 0; k < 4; k++) { const a0 = v[k] - c, a1 = v[(k + 1) % 4] - c; if ((a0 < 0) !== (a1 < 0)) { const t = a0 / (a0 - a1), A = P[k], B = P[(k + 1) % 4]; pts.push([(A[0] + (B[0] - A[0]) * t) * step, (A[1] + (B[1] - A[1]) * t) * step]); } }
+      if (pts.length >= 2) { p.moveTo(...pts[0]); p.lineTo(...pts[1]); }
+      if (pts.length === 4) { p.moveTo(...pts[2]); p.lineTo(...pts[3]); }
+    }
+    return { p, a };
+  });
+}
+
+// ---- drawing helpers ----
+function glow(x, y, r, c, a) { const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, rgba(c, a)); gr.addColorStop(1, rgba(c, 0)); g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill(); }
+function text(s, x, y, size = 12, col = '#cfe9f5', font = 'JetBrains Mono', align = 'left') { g.font = `${size}px "${font}", monospace`; g.fillStyle = col; g.textAlign = align; g.fillText(s, x, y); }
+function diamond(x, y, s) { g.beginPath(); g.moveTo(x, y - s); g.lineTo(x + s, y); g.lineTo(x, y + s); g.lineTo(x - s, y); g.closePath(); }
+function hex(x, y, r, rot = 0) { g.beginPath(); for (let k = 0; k < 6; k++) { const a = rot + k * Math.PI / 3; k ? g.lineTo(x + r * Math.cos(a), y + r * Math.sin(a)) : g.moveTo(x + r * Math.cos(a), y + r * Math.sin(a)); } g.closePath(); }
+const fmtKm = (k) => k >= 10000 ? `${Math.round(k / 1000).toLocaleString()}k km` : `${Math.round(k).toLocaleString()} km`;
+const fmtH = (h) => h >= 48 ? `${(h / 24).toFixed(1)} d` : `${h.toFixed(1)} h`;
+function panel(x, y, w, h, c) {
+  g.fillStyle = 'rgba(3,9,16,.82)'; g.fillRect(x, y, w, h);
+  g.strokeStyle = rgba(c, .55); g.lineWidth = 1; g.strokeRect(x + .5, y + .5, w, h);
+  g.fillStyle = rgba(c, .9); g.fillRect(x, y, 3, h);
+}
+
+// ---- main loop ----
+const t0 = performance.now();
+let lastNow = t0;
+layout();
+function tick(now) {
+  const t = (now - t0) / 1000;
+  online = feed.age != null && feed.age < 1.5 && performance.now() - feedAt < 1500;
+  const bk = (feed.board_in || [48, 36]).join();
+  if (bk !== boardKey) { boardKey = bk; layout(); }
+
+  // update pieces
+  const dt = Math.min(.05, Math.max(.001, (now - lastNow) / 1000)); lastNow = now;
+  for (const ev of pendingEvents.splice(0)) {
+    if (ev && ev.type === 'moved' && ev.jump) { const c = CRAFT.find(c => c.piece === ev.piece); if (c) c.jumpAt = t; }
+  }
+  for (const [i, c] of CRAFT.entries()) {
+    const alt = ALIASES[i].find(a => feed.pieces?.[a.piece]);
+    if (alt && alt.piece !== c.piece) Object.assign(c, alt, { init: false, key: '', trail: [] });
+    const p = feed.pieces?.[c.piece];
+    if (online) {
+      if (p && Number.isFinite(p.u) && Number.isFinite(p.v)) {
+        if (!c.on) { c.init = false; c.key = ''; c.trail = []; }
+        c.on = true; c.u = p.u; c.v = p.v; c.cell = p.cell || '—'; c.state = p.state || 'tracked'; c.seen = now;
+      } else c.on = false;       // absent from feed = not on the board
+    } else { c.on = true; c.state = 'tracked'; }
+    c.lost = c.on && c.state === 'lost'; c.held = c.on && c.state === 'held';
+    const tx = R.x + c.u * R.w, ty = R.y + c.v * R.h;
+    if (!c.init) { c.sx = tx; c.sy = ty; c.vx = c.vy = 0; c.init = true; c.trail = []; }
+    // critically damped spring (settle ~0.4 s) with a speed cap (0.6 board-widths/s)
+    const om = 14, vmax = .6 * R.w, h = dt / 4;
+    for (let k = 0; k < 4; k++) {
+      c.vx += (om * om * (tx - c.sx) - 2 * om * c.vx) * h; c.vy += (om * om * (ty - c.sy) - 2 * om * c.vy) * h;
+      const sp = Math.hypot(c.vx, c.vy); if (sp > vmax) { c.vx *= vmax / sp; c.vy *= vmax / sp; }
+      c.sx += c.vx * h; c.sy += c.vy * h;
+    }
+    c.speed = Math.hypot(c.vx, c.vy);
+    const jumping = t - c.jumpAt < 2.5, keep = jumping ? 1.4 : .45;
+    if (c.speed > 25 && c.on) c.trail.push({ x: c.sx, y: c.sy, t });
+    while (c.trail.length && t - c.trail[0].t > keep) c.trail.shift();
+    const cellNow = online ? c.cell : `${Math.round(c.u * 100)},${Math.round(c.v * 100)}`;
+    if (cellNow !== c.lastCell && c.on && !c.lost) { c.ping = t; c.lastCell = cellNow; }
+    // recompute the orbit prediction only once settled (or when the grid cell changed)
+    const settled = c.speed < 10, cellChanged = online && c.cell !== c.orbCell;
+    if (c.on && !c.lost && (c.key === '' || (settled && Math.hypot(c.sx - c.kx, c.sy - c.ky) > 3) || cellChanged)) {
+      c.key = 'k'; c.kx = c.sx; c.ky = c.sy; c.orbCell = c.cell;
+      const [x, y] = fromS(c.sx, c.sy);
+      c.info = classify(x, y);
+      c.traj = c.info.ground ? null : c.info.halo ? haloPath(c.info.halo, x, y) : propagate(x, y);
+    }
+  }
+  const [B, P] = CRAFT;
+
+  // ---- backdrop ----
+  g.globalCompositeOperation = 'source-over';
+  g.fillStyle = '#02050a'; g.fillRect(0, 0, W, H);
+  const [Ex, Ey] = toS(-MU, 0), [Mx, My] = toS(1 - MU, 0);
+  let neb = g.createRadialGradient(Ex, Ey, 0, Ex, Ey, F.D * 1.2); neb.addColorStop(0, 'rgba(18,58,92,.4)'); neb.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = neb; g.fillRect(0, 0, W, H);
+  for (const [x, y, r, ph] of stars) { g.fillStyle = `rgba(200,230,255,${.3 + .25 * Math.sin(t * 1.2 + ph)})`; g.fillRect(x, y, r, r); }
+  if (showGrid) {
+    const [cols, rows] = feed.grid || [8, 6];
+    g.strokeStyle = 'rgba(79,216,255,.06)'; g.lineWidth = 1;
+    for (let i = 0; i <= cols; i++) { const x = R.x + R.w * i / cols; g.beginPath(); g.moveTo(x, R.y); g.lineTo(x, R.y + R.h); g.stroke(); }
+    for (let j = 0; j <= rows; j++) { const y = R.y + R.h * j / rows; g.beginPath(); g.moveTo(R.x, y); g.lineTo(R.x + R.w, y); g.stroke(); }
+    for (let i = 0; i < cols; i++) text(String.fromCharCode(65 + i), R.x + R.w * (i + .5) / cols, R.y + R.h - 8, 10, 'rgba(79,216,255,.3)', 'JetBrains Mono', 'center');
+    for (let j = 0; j < rows; j++) text(String(j + 1), R.x + R.w - 14, R.y + R.h * (j + .5) / rows, 10, 'rgba(79,216,255,.3)');
+  }
+  g.globalCompositeOperation = 'lighter';
+  for (const { p, a } of contours) { g.strokeStyle = rgba(CYAN, a * .3); g.lineWidth = 4; g.stroke(p); g.strokeStyle = rgba(CYAN, a); g.lineWidth = 1; g.stroke(p); }
+  g.setLineDash([2, 10]); g.strokeStyle = rgba(CYAN, .22); g.lineWidth = 1;
+  g.beginPath(); g.arc(Ex, Ey, F.D, 0, 7); g.stroke();
+  g.strokeStyle = rgba(CYAN, .35); g.setLineDash([8, 6]); g.beginPath(); g.arc(Ex, Ey, F.D * 42164 / KM, 0, 7); g.stroke(); g.setLineDash([]);
+  text('GEO', Ex + F.D * 42164 / KM * .72 + 6, Ey - F.D * 42164 / KM * .72, 10, rgba(CYAN, .6));
+  g.strokeStyle = 'rgba(200,210,220,.18)'; g.setLineDash([3, 6]); g.beginPath(); g.arc(Mx, My, F.D * HILL_M, 0, 7); g.stroke(); g.setLineDash([]);
+  for (const [n, [x, y]] of Object.entries(LPTS)) {
+    const [sx, sy] = toS(x, y); if (sx < -20 || sx > W + 20) continue;
+    const c = n === 'L4' || n === 'L5' ? AMBER : CYAN, pulse = .55 + .35 * Math.sin(t * 2 + x * 4);
+    g.strokeStyle = rgba(c, pulse); g.lineWidth = 1.4; diamond(sx, sy, 6); g.stroke(); glow(sx, sy, 18, c, .18 * pulse);
+    text(n, sx + 10, sy - 8, 11, rgba(c, .85), 'Michroma');
+  }
+  for (const n of ['L1', 'L2']) { const [lx] = LPTS[n]; g.strokeStyle = rgba(CYAN, .12); g.beginPath(); for (let k = 0; k <= 48; k++) { const a = k / 48 * 6.283, [sx, sy] = toS(lx + .018 * Math.cos(a), .055 * Math.sin(a)); k ? g.lineTo(sx, sy) : g.moveTo(sx, sy); } g.stroke(); }
+
+  // Earth & Moon (fixed)
+  glow(Ex, Ey, 70, [60, 160, 255], .4); glow(Mx, My, 26, [200, 200, 210], .22);
+  g.globalCompositeOperation = 'source-over';
+  const rE = Math.max(14, F.D * .03), rM = rE * .27 + 3;
+  let gr = g.createRadialGradient(Ex - rE * .35, Ey - rE * .35, rE * .1, Ex, Ey, rE); gr.addColorStop(0, '#9fe3ff'); gr.addColorStop(.45, '#2a7fd0'); gr.addColorStop(1, '#0a2448');
+  g.fillStyle = gr; g.beginPath(); g.arc(Ex, Ey, rE, 0, 7); g.fill();
+  g.strokeStyle = 'rgba(140,220,255,.6)'; g.lineWidth = 1.4; g.beginPath(); g.arc(Ex, Ey, rE + 2.5, 0, 7); g.stroke();
+  gr = g.createRadialGradient(Mx - rM * .3, My - rM * .3, 1, Mx, My, rM); gr.addColorStop(0, '#f0f0ec'); gr.addColorStop(1, '#55565a');
+  g.fillStyle = gr; g.beginPath(); g.arc(Mx, My, rM, 0, 7); g.fill();
+  text('EARTH', Ex, Ey + rE + 18, 11, 'rgba(207,233,245,.8)', 'Michroma', 'center');
+  text('LUNA', Mx, My + rM + 16, 10, 'rgba(207,233,245,.7)', 'Michroma', 'center');
+
+  // ---- spacecraft: predicted paths ----
+  const loop = (t % 5) / 5;   // ghost replay of the next 6 days every 5 s
+  for (const c of CRAFT) {
+    if (!c.traj || c.lost || !c.on) continue;
+    const tr = c.traj, n = tr.T.length;
+    g.globalAlpha = c.held ? .4 : 1;
+    g.globalCompositeOperation = 'lighter';
+    for (let i = 1; i < n; i++) {
+      const a = 1 - i / n, [x0, y0] = toS(tr.X[i - 1], tr.Y[i - 1]), [x1, y1] = toS(tr.X[i], tr.Y[i]);
+      g.strokeStyle = rgba(c.col, .15 + .55 * a); g.lineWidth = 1 + 1.6 * a;
+      g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+    }
+    for (let hrs = 12; hrs < HORIZON * TU_H; hrs += 12) {
+      const tt = hrs / TU_H; if (tt > tr.T[n - 1]) break;
+      const [sx, sy] = toS(...at(tr, tt)); g.fillStyle = rgba(c.col, .8); g.fillRect(sx - 1.5, sy - 1.5, 3, 3);
+      if (hrs % 24 === 0) text(`+${hrs / 24}d`, sx + 5, sy - 4, 9, rgba(c.col, .65));
+    }
+    const [gx, gy] = toS(...at(tr, loop * tr.T[n - 1]));
+    glow(gx, gy, 14, c.col, .6); g.fillStyle = '#fff'; g.fillRect(gx - 1.5, gy - 1.5, 3, 3);
+    if (tr.impact) { const [ix, iy] = toS(tr.X[n - 1], tr.Y[n - 1]); g.strokeStyle = rgba(RED, .9); g.lineWidth = 2; g.beginPath(); g.moveTo(ix - 6, iy - 6); g.lineTo(ix + 6, iy + 6); g.moveTo(ix + 6, iy - 6); g.lineTo(ix - 6, iy + 6); g.stroke(); text(`IMPACT ${tr.impact}  +${fmtH(tr.T[n - 1] * TU_H)}`, ix + 9, iy + 4, 10, rgba(RED, .9)); }
+    g.globalAlpha = 1;
+  }
+
+  // ---- engagement: range, custody, closest approach ----
+  let eng = null;
+  if (B.info && P.info && B.on && P.on && !B.lost && !P.lost) {
+    const rangeKm = Math.hypot(B.sx - P.sx, B.sy - P.sy) * kmPerPx();
+    let cpa = { d: Infinity, t: 0 };
+    if (B.traj && P.traj) {
+      const end = Math.min(B.traj.T[B.traj.T.length - 1], P.traj.T[P.traj.T.length - 1]);
+      for (let tt = 0; tt <= end; tt += .004) { const [x1, y1] = at(B.traj, tt), [x2, y2] = at(P.traj, tt), d = Math.hypot(x1 - x2, y1 - y2) * KM; if (d < cpa.d) cpa = { d, t: tt }; }
+    }
+    const match = !B.info.halo && !P.info.halo && !B.info.ground && !P.info.ground && B.info.region !== 'LUNAR ORBIT' && P.info.region !== 'LUNAR ORBIT' ? hohmann(B.info.dE, P.info.dE) : null;
+    eng = { rangeKm, custody: rangeKm <= SENSOR_KM, cpa, match };
+    // sensor ring + link
+    g.globalCompositeOperation = 'lighter';
+    g.setLineDash([4, 8]); g.strokeStyle = rgba(B.col, .25); g.beginPath(); g.arc(B.sx, B.sy, SENSOR_KM / kmPerPx(), 0, 7); g.stroke(); g.setLineDash([]);
+    g.strokeStyle = eng.custody ? rgba([125, 255, 176], .55 + .3 * Math.sin(t * 6)) : rgba(RED, .25);
+    g.setLineDash(eng.custody ? [] : [3, 7]); g.lineWidth = 1.4; g.beginPath(); g.moveTo(B.sx, B.sy); g.lineTo(P.sx, P.sy); g.stroke(); g.setLineDash([]);
+    if (isFinite(cpa.d) && cpa.t > .001) {
+      const [ax, ay] = toS(...at(B.traj, cpa.t)), [bx, by] = toS(...at(P.traj, cpa.t));
+      g.strokeStyle = rgba(AMBER, .9); g.lineWidth = 1.5; g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.stroke();
+      for (const [x, y] of [[ax, ay], [bx, by]]) { g.beginPath(); g.arc(x, y, 7 + 2 * Math.sin(t * 5), 0, 7); g.stroke(); }
+      text(`CPA ${fmtKm(cpa.d)} · +${fmtH(cpa.t * TU_H)}`, (ax + bx) / 2 + 10, (ay + by) / 2 - 8, 11, rgba(AMBER, .95));
+    }
+  }
+
+  // ---- spacecraft markers ----
+  g.globalCompositeOperation = 'lighter';
+  for (const c of CRAFT) {   // glide trails
+    const tl = c.trail, jumping = t - c.jumpAt < 2.5;
+    if (!c.on || tl.length < 2) continue;
+    g.lineCap = 'round';
+    for (let i = 1; i < tl.length; i++) {
+      const age = 1 - (t - tl[i].t) / (jumping ? 1.4 : .45), a = Math.max(0, Math.min(1, age));
+      g.strokeStyle = rgba(c.col, (jumping ? .75 : .45) * a); g.lineWidth = (jumping ? 3 + 9 * a : 2 + 6 * a);
+      g.beginPath(); g.moveTo(tl[i - 1].x, tl[i - 1].y); g.lineTo(tl[i].x, tl[i].y); g.stroke();
+    }
+    g.lineCap = 'butt';
+  }
+  g.globalCompositeOperation = 'source-over';
+  for (const c of CRAFT) {
+    if (!c.on) continue;
+    const x = c.sx, y = c.sy, since = t - c.ping;
+    if (since < 1.2 && !c.lost) { g.strokeStyle = rgba(c.col, 1 - since / 1.2); g.lineWidth = 2; g.beginPath(); g.arc(x, y, 12 + since * 70, 0, 7); g.stroke(); }
+    if (c.lost) {
+      g.strokeStyle = Math.sin(t * 8) > 0 ? rgba(RED, .9) : rgba(RED, .3); g.setLineDash([4, 5]); g.lineWidth = 2; hex(x, y, 16); g.stroke(); g.setLineDash([]);
+      text(`${c.id}  LOST`, x + 22, y + 4, 12, rgba(RED, .9), 'Michroma'); continue;
+    }
+    g.globalAlpha = c.held ? .3 + .2 * Math.sin(t * 6) : 1;
+    g.globalCompositeOperation = 'lighter'; glow(x, y, 34, c.col, .45); g.globalCompositeOperation = 'source-over';
+    g.fillStyle = rgba(c.col, .25); g.strokeStyle = rgba(c.col, 1); g.lineWidth = 2; hex(x, y, 15, t * .4); g.fill(); g.stroke();
+    g.fillStyle = '#fff'; g.beginPath(); g.arc(x, y, 3, 0, 7); g.fill();
+    text(c.id + (c.held ? '  HELD' : ''), x + 22, y - 3, 12, '#eaf7ff', 'Michroma');
+    text(c.info ? c.info.region : '', x + 22, y + 13, 10, rgba(c.col, .95));
+    g.globalAlpha = 1;
+  }
+
+  // ---- panels ----
+  const pw = 300;
+  CRAFT.forEach((c, i) => {
+    const x = 18, y = 18 + i * 150, info = c.info || {};
+    panel(x, y, pw, 136, c.lost ? RED : c.col);
+    text(`${c.id}`, x + 16, y + 26, 14, rgba(c.col, 1), 'Michroma');
+    text(c.side, x + pw - 12, y + 26, 10, c.side === 'FRIENDLY' ? 'rgba(125,255,176,.9)' : 'rgba(255,120,120,.9)', 'JetBrains Mono', 'right');
+    if (!c.on) { text('NOT ON BOARD', x + 16, y + 54, 12, 'rgba(207,233,245,.6)'); return; }
+    if (c.held) text('HELD', x + pw - 70, y + 44, 10, rgba(AMBER, .9));
+    if (c.lost) { text('SIGNAL LOST — piece lifted', x + 16, y + 54, 12, rgba(RED, .9)); text(`last seen ${c.cell}`, x + 16, y + 74, 11, 'rgba(207,233,245,.6)'); return; }
+    const rows = [
+      ['GRID', online ? c.cell : 'demo'],
+      ['REGION', info.region || '—'],
+      [info.region === 'LUNAR ORBIT' || info.region === 'LUNAR SURFACE' ? 'FROM LUNA' : 'FROM EARTH', info.region?.startsWith('LUNAR') ? fmtKm(info.dM) : fmtKm(info.dE || 0)],
+      ['Δv FROM LEO', info.ground && !info.dv ? '—' : `${info.approx ? '≈' : ''}${(info.dv || 0).toFixed(2)} km/s`],
+      ['TRANSFER', info.tof ? `${info.approx ? '≈' : ''}${fmtH(info.tof)}` : '—'],
+    ];
+    rows.forEach(([k, v], j) => { text(k, x + 16, y + 50 + j * 17, 10, 'rgba(207,233,245,.55)'); text(v, x + 120, y + 50 + j * 17, 12, '#e6f4fb'); });
+  });
+  {
+    const x = 18, y = 318, c = eng ? (eng.custody ? [125, 255, 176] : AMBER) : [120, 130, 140];
+    panel(x, y, pw, 112, c);
+    text('ENGAGEMENT', x + 16, y + 26, 13, rgba(c, 1), 'Michroma');
+    if (!eng) text('needs both spacecraft on the board', x + 16, y + 52, 11, 'rgba(207,233,245,.6)');
+    else {
+      [['RANGE', fmtKm(eng.rangeKm)], ['SENSOR', eng.custody ? 'CUSTODY — tracking PURPLE-1' : `out of range (${fmtKm(SENSOR_KM)})`],
+       ['CLOSEST', isFinite(eng.cpa.d) ? `${fmtKm(eng.cpa.d)} at +${fmtH(eng.cpa.t * TU_H)}` : '—'],
+       ['MATCH ORBIT', eng.match ? `${eng.match.dv.toFixed(2)} km/s · ${fmtH(eng.match.tof)}` : '—']]
+        .forEach(([k, v], j) => { text(k, x + 16, y + 50 + j * 17, 10, 'rgba(207,233,245,.55)'); text(v, x + 120, y + 50 + j * 17, 11.5, '#e6f4fb'); });
+    }
+  }
+  text('CISLUNAR OPS // LIVE TRACK', W - 24, 40, 15, '#4fd8ff', 'Michroma', 'right');
+  text(online ? '● TRACKER LIVE' : '○ TRACKER OFFLINE · DEMO — drag the spacecraft', W - 24, 60, 11, online ? '#7dffb0' : '#ffb13b', 'JetBrains Mono', 'right');
+  {
+    const cal = feed.calibrated, parts = [];
+    if (online) {
+      parts.push(`${Number.isFinite(feed.fps) ? feed.fps.toFixed(1) : '?'} fps`);
+      parts.push(feed.calibrated === false ? 'NOT CALIBRATED' : feed.calibrated ? `CALIBRATED${feed.calib ? ' (' + feed.calib + ')' : ''}` : 'calibration n/a');
+      parts.push(`feed age ${(feed.age || 0).toFixed(2)} s`);
+      const bad = cal === false || feed.bumped || (feed.camera && feed.camera.ok === false);
+      text(parts.join('  ·  '), W - 24, 96, 10, bad ? '#ffb13b' : 'rgba(125,255,176,.8)', 'JetBrains Mono', 'right');
+      if (feed.bumped) text('⚠ CAMERA BUMPED — recalibrate', W - 24, 114, 11, '#ff6b6b', 'JetBrains Mono', 'right');
+    } else text(feed.age != null ? `last feed ${(feed.age).toFixed(1)} s ago` : 'no feed received', W - 24, 96, 10, 'rgba(255,177,59,.8)', 'JetBrains Mono', 'right');
+  }
+  text(`SCALE  1 board-inch ≈ ${fmtKm(KM / (MAP.span * (feed.board_in?.[0] || 48)))}  ·  6-day forecast, Earth–Moon rotating frame`, W - 24, 78, 10, 'rgba(207,233,245,.5)', 'JetBrains Mono', 'right');
+
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

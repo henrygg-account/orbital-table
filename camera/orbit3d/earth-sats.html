@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbital Ops</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --fg: #d8e6ff; --dim: rgba(216,230,255,.5); --line: rgba(120,170,255,.18); --panel: rgba(6,12,26,.72); --a: #ffc83d; --b: #ff4f6d; --ok: #6dffb0; --warn: #ffb13b; --bad: #ff5a5a; }
+  html, body { margin: 0; height: 100%; background: #02040a; color: var(--fg); font: 12px/1.4 'JetBrains Mono', ui-monospace, monospace; overflow: hidden; }
+  canvas { display: block; }
+  .lbl { position: fixed; pointer-events: none; transform: translate(-50%, -100%); font-size: 10px; letter-spacing: .14em; white-space: nowrap; text-shadow: 0 0 6px #000; opacity: .8; }
+  #feed { position: fixed; top: 14px; left: 14px; width: 8px; height: 8px; border-radius: 50%; background: #ffb13b; box-shadow: 0 0 8px currentColor; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="feed" title="tracking feed"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+// ---------------------------------------------------------------------------
+// Board ↔ world: the camera frame maps onto a BW-wide plane (y = 0 is the orbit plane).
+// Real scale: KM per world unit, so the frame is 120,000 km across and GEO sits ~5.6 units out.
+// ---------------------------------------------------------------------------
+const BW = 16, KM = 7500, R_E = 6371, GEO = 42164;
+let BH = 9, tilt = 0.32;
+const $ = id => document.getElementById(id);
+const EARTH = 'tape';
+const SATS = [
+  { piece: 'ball',   id: 'AURORA-1',   hex: '#ffc83d', col: 0xffc83d },
+  { piece: 'marker', id: 'VANGUARD-2', hex: '#ff4f6d', col: 0xff4f6d },
+];
+const DEMO = { tape: [.5, .52], ball: [.66, .3], marker: [.27, .74] };
+const SUN = new THREE.Vector3(-1, 0, .35).normalize();   // sunlight direction in the orbit plane (toward the sun)
+
+// ---------- renderer / scene ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x02040a);
+const camera = new THREE.PerspectiveCamera(32, 1, .1, 400);
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), .45, .4, .85);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+scene.add(new THREE.AmbientLight(0x223355, .35));
+const sunLight = new THREE.DirectionalLight(0xfff4e0, 3.2);
+sunLight.position.copy(SUN).multiplyScalar(20).add(new THREE.Vector3(0, 9, 0));
+scene.add(sunLight);
+
+// stars far below the orbit plane
+{
+  const n = 4000, p = new Float32Array(n * 3), c = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    p[i * 3] = (Math.random() - .5) * 220; p[i * 3 + 1] = -30 - Math.random() * 60; p[i * 3 + 2] = (Math.random() - .5) * 140;
+    const b = .35 + Math.random() * .65, w = Math.random();
+    c[i * 3] = b * (w > .8 ? 1 : .8); c[i * 3 + 1] = b * .88; c[i * 3 + 2] = b * (w < .2 ? .7 : 1);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(p, 3)); g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ size: .18, vertexColors: true, sizeAttenuation: true, transparent: true, opacity: .9 })));
+}
+
+// ---------- procedural Earth ----------
+function hash(x, y, z, s) {
+  let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(z, 1274126177) + Math.imul(s, 2246822519)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function noise(x, y, z, s) {
+  const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+  const f = t => t * t * (3 - 2 * t), u = f(x - xi), v = f(y - yi), w = f(z - zi);
+  const L = (a, b, t) => a + (b - a) * t;
+  const c = (dx, dy, dz) => hash(xi + dx, yi + dy, zi + dz, s);
+  return L(L(L(c(0,0,0), c(1,0,0), u), L(c(0,1,0), c(1,1,0), u), v), L(L(c(0,0,1), c(1,0,1), u), L(c(0,1,1), c(1,1,1), u), v), w);
+}
+function fbm(x, y, z, s, oct = 5) {
+  let a = .5, f = 1, sum = 0, norm = 0;
+  for (let i = 0; i < oct; i++) { sum += a * noise(x * f, y * f, z * f, s + i); norm += a; a *= .5; f *= 2.03; }
+  return sum / norm;
+}
+function sphereTexture(W, H, paint) {
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(W, H);
+  for (let j = 0; j < H; j++) {
+    const lat = (.5 - (j + .5) / H) * Math.PI, cl = Math.cos(lat), y = Math.sin(lat);
+    for (let i = 0; i < W; i++) {
+      const lon = (i + .5) / W * Math.PI * 2;
+      const [r, g, b, a] = paint(Math.cos(lon) * cl, y, Math.sin(lon) * cl, lat);
+      const k = (j * W + i) * 4; img.data[k] = r; img.data[k + 1] = g; img.data[k + 2] = b; img.data[k + 3] = a;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  return t;
+}
+const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * Math.max(0, Math.min(1, t)));
+const earthMap = sphereTexture(1024, 512, (x, y, z, lat) => {
+  const s = 1.7, n = fbm(x * s + 3, y * s, z * s, 1), d = fbm(x * 6, y * 6, z * 6, 9, 3);
+  const polar = Math.abs(lat) / (Math.PI / 2) + (d - .5) * .25;
+  if (polar > .82) return [235, 242, 250, 255];
+  if (n < .5) return [...mix([6, 26, 66], [22, 84, 140], (n - .3) / .2), 255];
+  const dry = 1 - Math.abs(lat) / .6 + (d - .5) * .8;
+  let c = mix([42, 92, 40], [122, 108, 62], (n - .5) / .18);
+  c = mix(c, [176, 150, 98], dry * .7);
+  if (polar > .7) c = mix(c, [220, 228, 236], (polar - .7) / .12);
+  return [...c, 255];
+});
+const cloudMap = sphereTexture(512, 256, (x, y, z) => {
+  const n = fbm(x * 2.6 + 11, y * 3.2, z * 2.6, 21);
+  const a = Math.max(0, Math.min(1, (n - .52) / .2));
+  return [255, 255, 255, a * 210];
+});
+const R = R_E / KM;
+const earth = new THREE.Group(); scene.add(earth);
+const globe = new THREE.Mesh(new THREE.SphereGeometry(R, 96, 64),
+  new THREE.MeshStandardMaterial({ map: earthMap, roughness: .82, metalness: 0, emissive: 0x050c1c }));
+const clouds = new THREE.Mesh(new THREE.SphereGeometry(R * 1.015, 96, 64),
+  new THREE.MeshStandardMaterial({ map: cloudMap, transparent: true, depthWrite: false, roughness: 1 }));
+const atmo = new THREE.Mesh(new THREE.SphereGeometry(R * 1.12, 64, 48), new THREE.ShaderMaterial({
+  transparent: true, depthWrite: false, side: THREE.BackSide, blending: THREE.AdditiveBlending,
+  uniforms: { sun: { value: SUN } },
+  vertexShader: `varying vec3 vN; varying vec3 vW; void main(){ vN = normalize(mat3(modelMatrix) * normal); vec4 w = modelMatrix * vec4(position,1.); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+  fragmentShader: `uniform vec3 sun; varying vec3 vN; varying vec3 vW;
+    void main(){ vec3 v = normalize(cameraPosition - vW); float rim = pow(1. - abs(dot(v, vN)), 2.2);
+      float lit = .3 + .7 * smoothstep(-.3, .6, dot(vN, sun));
+      gl_FragColor = vec4(vec3(.32,.62,1.) * rim * 1.6 * lit, rim); }`,
+}));
+earth.add(globe, clouds, atmo);
+
+// ---------- helpers ----------
+const lineMats = [];
+function fatLine(points, color, width, opts = {}) {
+  const g = new LineGeometry(); g.setPositions(points.flatMap(p => [p.x, p.y, p.z]));
+  const m = new LineMaterial({ color, linewidth: width, transparent: true, opacity: opts.opacity ?? 1, dashed: !!opts.dash,
+    dashSize: opts.dash || 1, gapSize: opts.gap || 1, depthWrite: false });
+  if (opts.additive) m.blending = THREE.AdditiveBlending;
+  lineMats.push(m);
+  const l = new Line2(g, m); l.computeLineDistances();
+  return l;
+}
+function setLine(l, points) { l.geometry.setPositions(points.flatMap(p => [p.x, p.y, p.z])); l.computeLineDistances(); }
+const circlePts = (r, n = 160) => Array.from({ length: n + 1 }, (_, i) => new THREE.Vector3(Math.cos(i / n * Math.PI * 2) * r, 0, Math.sin(i / n * Math.PI * 2) * r));
+const glowTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+  const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(.25, 'rgba(255,255,255,.45)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128); return new THREE.CanvasTexture(c);
+})();
+const glow = (col, s) => { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: col, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true })); sp.scale.setScalar(s); return sp; };
+function label(text, cls = '') { const d = document.createElement('div'); d.className = 'lbl ' + cls; d.textContent = text; document.body.appendChild(d); return d; }
+const tmpV = new THREE.Vector3();
+function place(el, v, dy = 0) {
+  tmpV.copy(v).project(camera);
+  if (tmpV.z > 1) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.style.left = ((tmpV.x + 1) / 2 * innerWidth) + 'px';
+  el.style.top = ((1 - tmpV.y) / 2 * innerHeight + dy) + 'px';
+}
+
+// faint GEO reference ring around Earth
+const rings = new THREE.Group(); scene.add(rings);
+rings.add(fatLine(circlePts(GEO / KM), 0x5f8dff, 1.2, { opacity: .22, dash: .12, gap: .12 }));
+
+// ---------- satellites ----------
+function buildSat(col) {
+  const g = new THREE.Group();
+  const foil = new THREE.MeshStandardMaterial({ color: 0xd6a84a, metalness: .85, roughness: .32, emissive: col, emissiveIntensity: .12 });
+  const panel = new THREE.MeshStandardMaterial({ color: 0x1b2f6b, metalness: .4, roughness: .3, emissive: 0x0b1a44, emissiveIntensity: .8 });
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(.16, .12, .12), foil));
+  for (const s of [-1, 1]) {
+    const w = new THREE.Mesh(new THREE.BoxGeometry(.34, .008, .13), panel); w.position.x = s * .27; g.add(w);
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(.006, .006, .1), foil); arm.rotation.z = Math.PI / 2; arm.position.x = s * .1; g.add(arm);
+  }
+  const dish = new THREE.Mesh(new THREE.ConeGeometry(.05, .04, 16, 1, true), new THREE.MeshStandardMaterial({ color: 0xeeeeee, side: THREE.DoubleSide, metalness: .3, roughness: .4 }));
+  dish.position.y = .09; dish.rotation.x = Math.PI; g.add(dish);
+  g.scale.setScalar(1.25);
+  return g;
+}
+for (const s of SATS) {
+  s.obj = new THREE.Group(); s.model = buildSat(s.col); s.halo = glow(s.col, .5);
+  s.obj.add(s.model, s.halo); scene.add(s.obj);
+  s.ring = fatLine(circlePts(1), s.col, 1.4, { opacity: .45 }); scene.add(s.ring);
+  s.lbl = label(s.id); s.lbl.style.color = s.hex;
+}
+const link = fatLine([new THREE.Vector3(), new THREE.Vector3()], 0x6dffb0, 1.2, { opacity: .45, additive: true }); scene.add(link);
+
+// ---------- input: feed or demo ----------
+const pieces = {};           // name -> {u, v, seen_ago} (raw from feed or demo)
+const smooth = {};           // name -> Vector3 world (smoothed)
+let feed = null, feedAt = -1e9;
+try {
+  const es = new EventSource('/events');
+  es.onmessage = e => { try { feed = JSON.parse(e.data); feedAt = performance.now(); } catch {} };
+} catch {}
+const online = () => performance.now() - feedAt < 1500;
+for (const [k, [u, v]] of Object.entries(DEMO)) pieces[k] = { u, v, seen_ago: 0 };
+
+const uvToWorld = (u, v, out = new THREE.Vector3()) => out.set((u - .5) * BW, 0, (v - .5) * BH);
+const ray = new THREE.Raycaster(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), mouse = new THREE.Vector2();
+let drag = null;
+function pick(e) {
+  mouse.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(mouse, camera); const hit = new THREE.Vector3();
+  return ray.ray.intersectPlane(plane, hit) ? hit : null;
+}
+addEventListener('pointerdown', e => {
+  if (online()) return;
+  const h = pick(e); if (!h) return;
+  let best = null, bd = .8;
+  for (const k of Object.keys(pieces)) { const d = smooth[k] ? smooth[k].distanceTo(h) : 9; if (d < bd) { bd = d; best = k; } }
+  drag = best;
+});
+addEventListener('pointermove', e => { if (!drag) return; const h = pick(e); if (h) { pieces[drag].u = h.x / BW + .5; pieces[drag].v = h.z / BH + .5; } });
+addEventListener('pointerup', () => drag = null);
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (k === 't') { tilt = tilt ? 0 : .32; layout(); }
+  if (k === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+});
+
+// ---------- layout ----------
+function layout() {
+  const W = innerWidth, H = innerHeight;
+  renderer.setSize(W, H); composer.setSize(W, H); bloom.setSize(W, H);
+  for (const m of lineMats) m.resolution.set(W, H);
+  camera.aspect = W / H;
+  const vf = THREE.MathUtils.degToRad(camera.fov) / 2, hf = Math.atan(Math.tan(vf) * camera.aspect);
+  const d = Math.max((BW / 2) / Math.tan(hf), (BH / 2) / Math.tan(vf)) * 1.04;
+  camera.position.set(0, d * Math.cos(tilt), d * Math.sin(tilt));
+  camera.up.set(0, 0, -1);
+  camera.lookAt(0, 0, tilt ? .35 : 0);
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', layout);
+layout();
+
+// ---------- frame ----------
+let last = performance.now();
+function tick(now) {
+  const dt = Math.min(.05, Math.max(0, (now - last) / 1000)); last = now;
+  const live = online();
+  if (live && feed) {
+    BH = BW * feed.frame[1] / feed.frame[0];
+    for (const k of [EARTH, ...SATS.map(s => s.piece)]) {
+      const p = feed.pieces?.[k];
+      if (p && p.seen_ago < 4) pieces[k] = p; else delete pieces[k];
+    }
+  }
+  $('feed').style.background = $('feed').style.color = live ? '#6dffb0' : '#ffb13b';
+  const a = 1 - Math.exp(-dt / .09);
+  for (const [k, p] of Object.entries(pieces)) {
+    const tgt = uvToWorld(p.u, p.v);
+    if (!smooth[k]) smooth[k] = tgt.clone(); else smooth[k].lerp(tgt, a);
+  }
+
+  const eP = smooth[EARTH] || new THREE.Vector3();
+  earth.position.copy(eP); rings.position.copy(eP);
+  globe.rotation.y += dt * .05; clouds.rotation.y += dt * .065;
+
+  for (const s of SATS) {
+    const p = pieces[s.piece], show = !!p && !!smooth[s.piece];
+    s.obj.visible = s.ring.visible = show;
+    s.lbl.style.display = show ? '' : 'none';
+    if (!show) continue;
+    const held = p.seen_ago > .6;
+    s.obj.position.copy(smooth[s.piece]);
+    const rel = smooth[s.piece].clone().sub(eP);
+    s.obj.rotation.y = -Math.atan2(rel.z, rel.x) + Math.PI / 2;
+    s.model.rotation.x = now / 1400;
+    s.ring.position.copy(eP); s.ring.scale.setScalar(Math.max(R * 1.15, rel.length()));
+    s.ring.material.opacity = held ? .15 : .45;
+    s.halo.material.opacity = held ? .15 : .45;
+    place(s.lbl, s.obj.position, -14);
+  }
+
+  // link line: red when Earth blocks it
+  const [A, B] = SATS;
+  link.visible = A.obj.visible && B.obj.visible;
+  if (link.visible) {
+    const pa = A.obj.position.clone().sub(eP), ab = B.obj.position.clone().sub(A.obj.position);
+    const t = THREE.MathUtils.clamp(-pa.dot(ab) / ab.lengthSq(), 0, 1);
+    const blocked = pa.add(ab.multiplyScalar(t)).length() < R * 1.02;
+    setLine(link, [A.obj.position, B.obj.position]);
+    link.material.color.set(blocked ? 0xff5a5a : 0x6dffb0);
+    link.material.opacity = blocked ? .2 : .45;
+  }
+
+  composer.render();
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
