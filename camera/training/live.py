@@ -72,14 +72,14 @@ class Tracker:
     """Keeps the last sighting of every piece id; count>1 roles get stable ids by nearest neighbour."""
 
     NEAR_MM = 45        # a detection this close to a piece's last position is that piece
-    JUMP_FRAMES = 20    # a far-away detection must repeat this many frames (~1 s) before the piece moves there
+    JUMP_FRAMES = 1     # a far-away detection must repeat this many frames before the piece moves there (tune.html, Oct 7)
     STALE_S = 2.0       # ...unless the piece hasn't been seen for this long (it was picked up and put down)
     # Stillness lock: the published position only moves when the (smoothed) detection leaves a deadband
     # around it. Moving pieces use a small band; once a piece has sat still STILL_S, the band widens so
     # detector jitter can't nudge it and the orbits on screen stop completely.
-    SMOOTH = 0.3        # EMA weight of each new detection
-    BAND_MOVING_MM = 2.0
-    BAND_STILL_MM = 15.0
+    SMOOTH = 1.0        # EMA weight of each new detection (1 = none here; demo.html eases instead, PAGE_TAU_S)
+    BAND_MOVING_MM = 0.0
+    BAND_STILL_MM = 5.0
     STILL_S = 1.0       # still = the smoothed position has stayed within REST_MM of one spot this long
     REST_MM = 15.0
 
@@ -171,7 +171,7 @@ class Tracker:
 # Jitter vs. responsiveness knobs, changed while running via GET/POST /tuning and kept in tuning.json:
 # the Tracker constants above, the detector's confidence threshold, and the pages' easing time (sent in /events).
 TRACKER_KNOBS = ('SMOOTH', 'BAND_MOVING_MM', 'BAND_STILL_MM', 'STILL_S', 'REST_MM', 'NEAR_MM', 'JUMP_FRAMES', 'STALE_S')
-PAGE_TAU_S = 0.09        # demo.html eases each piece toward the feed with this time constant
+PAGE_TAU_S = 0.24        # demo.html eases each piece toward the feed with this time constant
 
 
 def default_tuning(conf):
@@ -549,7 +549,7 @@ def main():
     ap.add_argument('--index', type=int, help='OpenCV camera index (default: find --camera by name)')
     ap.add_argument('--camera', default='iphone', help='camera name to look for, e.g. arducam')
     ap.add_argument('--size', default='1920x1080', help='capture size WxH (Arducam: 2048x1536 at 30 fps)')
-    ap.add_argument("--conf", type=float, default=0.15)   # low is fine: the tracker ignores one-off far detections
+    ap.add_argument("--conf", type=float, default=0.05)   # low is fine: the tracker ignores one-off far detections
     ap.add_argument('--imgsz', type=int, default=960)
     ap.add_argument('--port', type=int, default=8780)
     ap.add_argument('--no-browser', action='store_true')
