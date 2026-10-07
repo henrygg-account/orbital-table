@@ -17,6 +17,7 @@ camera/training/weights/
 *.pt
 *.mlpackage/
 camera/training/calib.json
+camera/training/tuning.json
 
 # sky tile pyramid (227 MB): rebuild with camera/orbit3d/tools/make_sky_tiles.py from NASA SVS Deep Star Maps 2020
 camera/orbit3d/assets/sky/

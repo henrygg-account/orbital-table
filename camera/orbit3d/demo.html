@@ -581,7 +581,7 @@ function tick(now) {
   }
   document.getElementById('feed').style.background = live ? '#dde3e4' : '#5c6b70';
   { const t = !live ? 'DEMO · DRAG PIECES · SCROLL TO ROTATE' : feed.calibrated ? '' : 'UNCALIBRATED · PRESS C'; if (noteEl.textContent !== t) noteEl.textContent = t; }
-  const a = 1 - Math.exp(-dt / .09);
+  const a = 1 - Math.exp(-dt / Math.max(.001, live && feed.page_tau_s != null ? feed.page_tau_s : .09));   // easing time: live.py's tuning (tune.html)
   for (const [k, p] of Object.entries(pieces)) {
     if (!smooth[k]) smooth[k] = { x: p.x_mm, y: p.y_mm }; else { smooth[k].x += (p.x_mm - smooth[k].x) * a; smooth[k].y += (p.y_mm - smooth[k].y) * a; }
   }
@@ -608,8 +608,8 @@ function tick(now) {
   models.earth.scale.setScalar(fig ? fig.earth / EARTH_SPHERE_R : 1); models.moon.scale.setScalar(fig ? fig.moon / MOON_SPHERE_R : 1);
   for (const id of SATS) if (models[id]) models[id].scale.setScalar(fig ? ORB_SELDON_SCALE : SELDON_SCALE);
   for (const [k, r] of Object.entries(baseRings)) { const P = smooth[k]; r.visible = !!P && !fig; if (P) r.position.set(P.x, -P.y, 0); }
-  for (const [k, g] of Object.entries(models)) {
-    const P = smooth[k]; g.visible = !!P; if (!P) continue;
+  for (const [k, g] of Object.entries(models)) {   // live: the printed Earth and Seldons stand there, so no stand-ins under them
+    const P = smooth[k]; g.visible = !!P && !(online() && (k === 'earth' || SATS.includes(k))); if (!P) continue;
     g.position.x = P.x; g.position.y = -P.y; g.rotation.z = g.userData.rot;
   }
   models.earth.userData.spin.rotation.y += dt * .08; models.earth.userData.clouds.rotation.y += dt * .1;

@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tracking Tuning</title>
+<link rel="stylesheet" href="gg-table.css">
+<style>
+  :root { --mint: #0ee3a6; --warn: #e2604f; --line: rgba(246,248,248,.12); --dim: #8a969a; }
+  html, body { margin: 0; background: #0a0d0d; color: #dde3e4; font-family: var(--font-display); font-weight: 400; }
+  body { padding: 28px 32px 40px; max-width: 1180px; margin: 0 auto; }
+  .eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); display: flex; align-items: center; gap: 10px; }
+  .eyebrow .sq { width: 8px; height: 8px; background: var(--mint); display: inline-block; }
+  h1 { font-weight: 500; font-size: 34px; margin: 8px 0 24px; letter-spacing: -.01em; color: #f6f8f8; }
+  .row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+  .card { border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px 8px; background: #0d1113; }
+  .card h2 { font-family: var(--font-mono); font-weight: 400; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; margin: 0 0 14px; color: #f6f8f8; }
+  .f { margin-bottom: 18px; }
+  .f label { display: flex; justify-content: space-between; align-items: baseline; font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+  .f .v { font-family: var(--font-display); font-size: 17px; letter-spacing: 0; color: #f6f8f8; text-transform: none; font-variant-numeric: tabular-nums; }
+  .f .v i { font-style: normal; font-size: 11px; color: var(--dim); margin-left: 3px; }
+  .f .v.changed { color: var(--mint); }
+  .f p { margin: 6px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--dim); }
+  input[type=range] { width: 100%; accent-color: var(--mint); }
+  .btn { font-family: var(--font-mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; border-radius: 999px; padding: 11px 20px;
+    border: 1px solid var(--line); background: rgba(246,248,248,.04); color: #dde3e4; cursor: pointer; }
+  .bar { display: flex; gap: 14px; align-items: center; margin: 0 0 18px; flex-wrap: wrap; }
+  #msg { color: var(--dim); font-size: 13px; }
+  .status { border: 1px solid var(--line); border-radius: 14px; padding: 16px 20px; background: #0d1113; margin-bottom: 18px; }
+  .status table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .status th { font-family: var(--font-mono); font-weight: 400; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); text-align: right; padding: 0 0 8px; }
+  .status th:first-child, .status td:first-child { text-align: left; }
+  .status td { text-align: right; font-size: 17px; color: #f6f8f8; padding: 4px 0; }
+  .status td i { font-style: normal; font-size: 11px; color: var(--dim); margin-left: 3px; }
+  .hot { color: var(--warn) !important; } .calm { color: var(--mint) !important; }
+  @media (max-width: 900px) { body { padding: 20px 16px 32px; } .row { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="eyebrow"><span class="sq"></span>Orbital table · live.py</div>
+<h1>Jitter vs. responsiveness</h1>
+
+<div class="status">
+  <table>
+    <thead><tr><th>Piece</th><th>Jitter (2 s RMS)</th><th>Speed</th><th>Conf</th><th>Last seen</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="5" style="color:var(--dim);font-size:13px">Waiting for the feed…</td></tr></tbody>
+  </table>
+</div>
+
+<div class="bar">
+  <button class="btn" id="reset">Reset to defaults</button>
+  <span id="msg"></span>
+</div>
+
+<div class="row" id="cards"></div>
+
+<script>
+// Sliders for live.py's tracking knobs (GET/POST /tuning; saved to camera/training/tuning.json, so they survive a
+// restart). The table on top measures what the table page receives: jitter = RMS wobble of each piece's published
+// position over the last 2 s (leave a piece still to read it), speed = how fast that position is moving.
+const GROUPS = [
+  ['Locking in place', [
+    ['BAND_MOVING_MM', 'Min move to update (moving)', 0, 15, 0.5, 'mm', 'While a piece is moving, its position only updates once it has moved at least this far. Higher = steadier but steppier motion.'],
+    ['BAND_STILL_MM', 'Min move to update (locked)', 0, 40, 0.5, 'mm', 'Once a piece is locked in place, it ignores any movement smaller than this. Set it just above the jitter and the orbits freeze completely.'],
+    ['STILL_S', 'Lock-in time', 0.1, 5, 0.1, 's', 'How long a piece has to sit still before it locks in place (switches to the locked min move).'],
+    ['REST_MM', 'Lock-in radius', 2, 50, 1, 'mm', 'A piece counts as sitting still while it stays within this distance of where it stopped. Moving it further unlocks it.'],
+  ]],
+  ['Smoothing', [
+    ['SMOOTH', 'Detection smoothing', 0.05, 1, 0.01, '', 'Weight of each new detection (EMA). Lower = steadier but laggier; 1 = raw detections.'],
+    ['page_tau_s', 'Screen easing', 0, 0.5, 0.01, 's', 'Time constant the table page eases toward the feed. 0 = jump straight to each update.'],
+  ]],
+  ['Detector', [
+    ['conf', 'Confidence threshold', 0.05, 0.9, 0.01, '', 'Detections below this are dropped. Lower = fewer dropouts, more false hits (the tracker filters one-off strays).'],
+  ]],
+  ['Tracking', [
+    ['NEAR_MM', 'Same-piece radius', 10, 150, 1, 'mm', 'A detection this close to the last position is treated as the same piece. Fast hand moves need a bigger radius.'],
+    ['JUMP_FRAMES', 'Jump confirm', 1, 60, 1, 'frames', 'A detection far from the piece must repeat this many frames before the piece jumps there. Lower = faster to follow a picked-up piece, more false jumps.'],
+    ['STALE_S', 'Re-acquire after', 0.2, 10, 0.1, 's', 'If a piece is unseen this long, the next detection anywhere is accepted straight away.'],
+  ]],
+];
+const $ = id => document.getElementById(id);
+let defaults = {}, values = {}, pending = {}, timer = null;
+const fmt = (v, step) => (+v).toFixed(step >= 1 ? 0 : step >= .1 ? 1 : 2);
+
+function build() {
+  $('cards').innerHTML = '';
+  for (const [title, knobs] of GROUPS) {
+    const card = document.createElement('div'); card.className = 'card';
+    card.innerHTML = `<h2>${title}</h2>`;
+    for (const [k, name, min, max, step, unit, help] of knobs) {
+      const f = document.createElement('div'); f.className = 'f';
+      f.innerHTML = `<label>${name}<span class="v" id="v-${k}"></span></label>
+        <input type="range" id="s-${k}" min="${min}" max="${max}" step="${step}"><p>${help} <span style="opacity:.7">Default ${fmt(defaults[k], step)}${unit ? ' ' + unit : ''}.</span></p>`;
+      card.appendChild(f);
+      const s = f.querySelector('input');
+      s.value = values[k];
+      const show = () => { const el = f.querySelector('.v'); el.innerHTML = `${fmt(s.value, step)}${unit ? `<i>${unit}</i>` : ''}`; el.classList.toggle('changed', Math.abs(s.value - defaults[k]) > step / 2); };
+      s.addEventListener('input', () => { show(); pending[k] = +s.value; send(); });
+      show();
+    }
+    $('cards').appendChild(card);
+  }
+}
+
+function send() {                                    // throttled: at most ~8 posts a second while dragging
+  if (timer) return;
+  timer = setTimeout(async () => {
+    timer = null; const body = pending; pending = {};
+    try {
+      const r = await (await fetch('/tuning', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+      if (r.ok) { values = r.values; $('msg').textContent = 'Saved · applied live'; } else $('msg').textContent = 'Error: ' + r.error;
+    } catch { $('msg').textContent = 'live.py not reachable'; }
+  }, 120);
+}
+
+$('reset').onclick = async () => {
+  const r = await (await fetch('/tuning', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(defaults) })).json();
+  if (r.ok) { values = r.values; build(); $('msg').textContent = 'Reset to defaults'; }
+};
+
+(async () => {
+  let t;
+  try { t = await (await fetch('/tuning')).json(); }
+  catch { return $('msg').textContent = 'live.py not reachable: open this page from http://localhost:8780/tune.html'; }
+  defaults = t.defaults; values = t.values; build();
+})();
+
+// ---------- live jitter readout ----------
+const hist = {};                                     // id -> [[t, x, y], ...] over the last 2 s
+let last = null;
+new EventSource('/events').onmessage = e => { try { last = JSON.parse(e.data); } catch { return; }
+  const t = performance.now() / 1000;
+  for (const [k, p] of Object.entries(last.pieces || {})) {
+    (hist[k] ||= []).push([t, p.x_mm, p.y_mm]);
+    while (hist[k].length && hist[k][0][0] < t - 2) hist[k].shift();
+  }
+  for (const k of Object.keys(hist)) if (!last.pieces?.[k]) delete hist[k];
+};
+setInterval(() => {
+  if (!last) return;
+  const rows = Object.entries(last.pieces || {}).sort().map(([k, p]) => {
+    const h = hist[k] || [];
+    let rms = 0, speed = 0;
+    if (h.length > 2) {
+      const mx = h.reduce((a, q) => a + q[1], 0) / h.length, my = h.reduce((a, q) => a + q[2], 0) / h.length;
+      rms = Math.sqrt(h.reduce((a, q) => a + (q[1] - mx) ** 2 + (q[2] - my) ** 2, 0) / h.length);
+      const a = h[0], b = h[h.length - 1]; speed = Math.hypot(b[1] - a[1], b[2] - a[2]) / Math.max(.1, b[0] - a[0]);
+    }
+    const cls = speed > 20 ? '' : rms < .5 ? 'calm' : rms > 3 ? 'hot' : '';
+    return `<tr><td>${k}</td><td class="${cls}">${rms.toFixed(1)}<i>mm</i></td><td>${speed.toFixed(0)}<i>mm/s</i></td>
+      <td>${p.conf.toFixed(2)}</td><td>${p.seen_ago.toFixed(1)}<i>s</i></td></tr>`;
+  });
+  $('rows').innerHTML = rows.join('') || '<tr><td colspan="5" style="color:var(--dim);font-size:13px">No pieces in the feed</td></tr>';
+  document.querySelector('.eyebrow').lastChild.textContent = `Orbital table · live.py · ${last.fps} fps · model ${last.model_ms} ms`;
+}, 250);
+</script>
+</body>
+</html>

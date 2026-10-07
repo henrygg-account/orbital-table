@@ -9,7 +9,7 @@ Keys: q quits, s saves the current frame to data/raw (to add to training later).
 Contract with the pages (pieces.json, /events, /calibrate, /marker/<id>.png): ../orbit3d/FEED.md.
 Everything outside main() is importable without a camera (see test_live.py).
 """
-import argparse, json, re, threading, time, webbrowser
+import argparse, json, os, re, sys, threading, time, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -20,6 +20,7 @@ HERE = Path(__file__).parent
 WEB = HERE.parent / 'orbit3d'
 PIECES_JSON = HERE / 'pieces.json'
 CALIB_JSON = HERE / 'calib.json'
+TUNING_JSON = HERE / 'tuning.json'
 COLORS = {'earth': (0, 200, 255), 'moon': (60, 230, 230), 'seldon': (60, 60, 240), 'iss': (255, 200, 60)}
 DROP_AFTER = 10.0        # seconds unseen before a piece leaves the feed
 CALIB_WINDOW = 3.0       # seconds the main loop looks for markers
@@ -166,6 +167,31 @@ class Tracker:
                     'seen_ago': round(now - p['t'], 2)} for i, p in self.pieces.items()}
 
 
+# ---------------------------------------------------------------- live tuning (tune.html)
+# Jitter vs. responsiveness knobs, changed while running via GET/POST /tuning and kept in tuning.json:
+# the Tracker constants above, the detector's confidence threshold, and the pages' easing time (sent in /events).
+TRACKER_KNOBS = ('SMOOTH', 'BAND_MOVING_MM', 'BAND_STILL_MM', 'STILL_S', 'REST_MM', 'NEAR_MM', 'JUMP_FRAMES', 'STALE_S')
+PAGE_TAU_S = 0.09        # demo.html eases each piece toward the feed with this time constant
+
+
+def default_tuning(conf):
+    return {**{k: getattr(Tracker, k) for k in TRACKER_KNOBS}, 'conf': conf, 'page_tau_s': PAGE_TAU_S}
+
+
+def set_tuning(changes, save=True):
+    """Apply {knob: value} (unknown knobs ignored) to the running tracker; -> the full current tuning."""
+    with lock:
+        t = state['tune']
+        for k, v in changes.items():
+            if k in t:
+                t[k] = int(round(float(v))) if isinstance(state['tune_default'][k], int) else float(v)
+        for k in TRACKER_KNOBS:
+            setattr(state['tracker'], k, t[k])
+        if save:
+            TUNING_JSON.write_text(json.dumps(t, indent=1))
+        return dict(t)
+
+
 # ---------------------------------------------------------------- aruco calibration
 def marker_png(mid, px=600):
     """Marker image. Choice: exactly the black square (no white border); the page adds the quiet border."""
@@ -278,9 +304,10 @@ def snapshot():
     now = time.time()
     with lock:
         cfg, trk = state['cfg'], state['tracker']
-        return {'t': now, 'fps': round(state['fps'], 1), 'calibrated': state['H'] is not None,
+        return {'t': now, 'fps': round(state['fps'], 1), 'model_ms': round(state.get('model_ms', 0)), 'calibrated': state['H'] is not None,
                 'screen_mm': cfg['screen_mm'], 'pieces': trk.feed(now),
-                'rec': state['rec'].status() if state.get('rec') else None}
+                'rec': state['rec'].status() if state.get('rec') else None,
+                'page_tau_s': state.get('tune', {}).get('page_tau_s', PAGE_TAU_S)}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -325,6 +352,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(json.dumps({'H': None if state['H'] is None else np.asarray(state['H']).tolist(),
                                        'screen_mm': state['cfg']['screen_mm'], 'frame_wh': state.get('frame_wh')}).encode(),
                            'application/json')
+            elif path == '/tuning':
+                with lock:
+                    res = {'values': dict(state['tune']), 'defaults': state['tune_default']}
+                self._send(json.dumps(res).encode(), 'application/json')
             elif path == '/snapshot.jpg':
                 self._send(state.get('snap') or b'', 'image/jpeg')
             elif path in ('/', '/index.html'):
@@ -342,6 +373,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
+            if self.path.split('?')[0] == '/tuning':             # tune.html: {knob: value, ...}
+                try:
+                    res = {'ok': True, 'values': set_tuning(json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or b'{}'))}
+                except Exception as e:
+                    res = {'ok': False, 'error': str(e)}
+                return self._send(json.dumps(res).encode(), 'application/json')
             if self.path.split('?')[0] == '/calibrate_corners':  # manual: corners dragged on the camera image
                 try:
                     body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or b'{}')
@@ -419,7 +456,14 @@ def on_screen(x_mm, y_mm, cfg, margin=25):
 
 def find_camera(name='iphone'):
     """OpenCV index of the camera whose name contains `name`. OpenCV's AVFoundation backend numbers cameras
-    in uniqueID order, so list them the same way and match by name."""
+    in uniqueID order, so list them the same way and match by name. Windows: DirectShow order, via pygrabber."""
+    if sys.platform == 'win32':
+        from pygrabber.dshow_graph import FilterGraph
+        devs = FilterGraph().get_input_devices()
+        for i, d in enumerate(devs):
+            if name.lower() in d.lower():
+                return i, d
+        raise SystemExit(f'no camera matching "{name}" (found: {", ".join(devs)})')
     import AVFoundation as AV
     devs = sorted(AV.AVCaptureDevice.devicesWithMediaType_(AV.AVMediaTypeVideo), key=lambda d: d.uniqueID())
     for i, d in enumerate(devs):
@@ -477,11 +521,31 @@ class LatestFrame:
             return self.seq, self.frame
 
 
+def use_directml():
+    """Windows without CUDA: ultralytics only asks ONNX Runtime for CUDA or CPU, so open its sessions on DirectML
+    (any DX12 GPU; ~2.5x the CPU on a Radeon iGPU). Needs onnxruntime-directml in place of onnxruntime."""
+    import onnxruntime as ort
+    if 'DmlExecutionProvider' not in ort.get_available_providers():
+        return
+    base = ort.InferenceSession
+
+    def session(path, opts=None, providers=None, **kw):
+        opts = opts or ort.SessionOptions()
+        opts.enable_mem_pattern = False                    # DirectML requirements
+        opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        return base(path, opts, providers=['DmlExecutionProvider', 'CPUExecutionProvider'], **kw)
+    ort.InferenceSession = session
+
+
 def main():
     ap = argparse.ArgumentParser()
-    run = HERE / 'runs/tv-sam-yolo11s-960/weights'          # printed pieces, SAM 2 labels (GCP, Oct 5)
+    run = HERE / 'runs/tv-pol-yolo11s-960/weights'          # round 3: polarized Arducam
+    if not run.exists():
+        run = HERE / 'runs/tv-sam-yolo11s-960/weights'      # printed pieces, SAM 2 labels (GCP, Oct 5)
     ml = run / 'best.mlpackage'                               # Core ML export, if present
-    ap.add_argument('--weights', default=str(ml if ml.exists() else run / 'best.pt'))
+    onnx = run / 'best.onnx'                                  # Windows: ONNX export, run on DirectML
+    dflt = ml if ml.exists() else onnx if sys.platform == 'win32' and onnx.exists() else run / 'best.pt'
+    ap.add_argument('--weights', default=str(dflt))
     ap.add_argument('--index', type=int, help='OpenCV camera index (default: find --camera by name)')
     ap.add_argument('--camera', default='iphone', help='camera name to look for, e.g. arducam')
     ap.add_argument('--size', default='1920x1080', help='capture size WxH (Arducam: 2048x1536 at 30 fps)')
@@ -491,21 +555,40 @@ def main():
     ap.add_argument('--no-browser', action='store_true')
     ap.add_argument('--no-window', action='store_true', help='no OpenCV preview (headless)')
     a = ap.parse_args()
+    if sys.platform == 'win32':            # it would "fix" onnxruntime-directml by installing the CPU onnxruntime over it
+        os.environ.setdefault('YOLO_AUTOINSTALL', 'false')
     from ultralytics import YOLO
     cfg = load_config()
     state['cfg'] = cfg; state['H'] = load_calib(); state['tracker'] = Tracker(cfg)
     trk, detector = state['tracker'], make_detector()
+    state['tune_default'] = default_tuning(a.conf); state['tune'] = dict(state['tune_default'])
+    try:
+        set_tuning(json.loads(TUNING_JSON.read_text()), save=False)
+        print('tuning from', TUNING_JSON.name)
+    except (OSError, ValueError):
+        set_tuning({}, save=False)
     serve(a.port)
 
     idx, name = (a.index, f'camera {a.index}') if a.index is not None else find_camera(a.camera)
     dev = f'camera {idx} ({name})'
     cw, ch = map(int, a.size.lower().split('x'))
-    cap = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)
+    win = sys.platform == 'win32'
+    cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW if win else cv2.CAP_AVFOUNDATION)
+    if win:                                # UVC: MJPG, or DirectShow falls back to raw YUY2 at a low frame rate
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, cw); cap.set(cv2.CAP_PROP_FRAME_HEIGHT, ch)
     if not cap.isOpened():
         raise SystemExit(f'could not open {dev}')
+    if win and a.weights.endswith('.onnx'):
+        use_directml()
     model = YOLO(a.weights, task='detect')
-    dev_kw = {} if a.weights.endswith('.mlpackage') else {'device': 'mps'}
+    if a.weights.endswith(('.mlpackage', '.onnx')):
+        dev_kw = {}
+    elif win:
+        import torch
+        dev_kw = {'device': 0 if torch.cuda.is_available() else 'cpu'}
+    else:
+        dev_kw = {'device': 'mps'}
     grab = state['grab'] = LatestFrame(cap)
     seq = 0
     print(f'{dev} -> {a.weights}   (q quit, s save frame)   calibrated: {state["H"] is not None}   '
@@ -523,8 +606,9 @@ def main():
             with lock:
                 state['pending'] = None
         t0 = time.time()
-        r = model.predict(frame, imgsz=a.imgsz, conf=a.conf, agnostic_nms=True, verbose=False, **dev_kw)[0]   # one class per object
+        r = model.predict(frame, imgsz=a.imgsz, conf=state['tune']['conf'], agnostic_nms=True, verbose=False, **dev_kw)[0]   # one class per object
         ms = 0.9 * ms + 0.1 * (time.time() - t0) * 1000
+        state['model_ms'] = ms
         fh, fw = frame.shape[:2]
         state['frame_wh'] = (fw, fh)
         Hm = state['H']
