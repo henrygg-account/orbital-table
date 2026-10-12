@@ -17,7 +17,7 @@ for (const [name, [p1, p2]] of Object.entries(cases)) {
   const a = G.bodyAt(maps, ...p1), b = G.bodyAt(maps, ...p2), X = G.transfer(maps, a, b);
   console.log(`\n${name}: Seldon-1 ${a.prim} r=${a.r.toFixed(0)} km (alt ${(a.r - (a.prim === 'M' ? G.R_M : G.R_E)).toFixed(0)}), Seldon-2 ${b.prim} r=${b.r.toFixed(0)} km (alt ${(b.r - (b.prim === 'M' ? G.R_M : G.R_E)).toFixed(0)})`);
   for (const k of ['gt', 'et']) {
-    const r = X[k], pts = r.path.flat(), xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    const r = X[k], pts = [...r.lead, ...r.path.flat()], xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
     const box = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
     const off = pts.filter(p => p[0] < MARG || p[0] > SW - MARG || p[1] < MARG || p[1] > SH - MARG).length;
     const underPanels = pts.filter(p => p[1] > PANEL_TOP && (p[0] < MARG + 300 || p[0] > SW - MARG - 88 - 300)).length;
@@ -50,14 +50,20 @@ for (let D = 53; D <= 1300; D += 7) for (const ang of [0, 1, 2.5, 4]) {
 }
 // no gap: altitude rises continuously from the figure edge
 { const m = G.makeMaps(); let prev = 0; for (let d = G.FIG.E; d < 200; d += .5) { const b = G.bodyAt(m, m.E.cx + d, m.E.cy), alt = b.r - G.R_E; check(alt >= prev && alt - prev < 600, `continuous altitude at ${d} mm (${prev} -> ${alt})`); prev = alt; } }
-// timed burns: every GT and ET path ends exactly on Seldon-2, for every pair of bodies and many angles
+// every GT and ET path starts exactly on Seldon-1 (coast, then first burn) and ends on Seldon-2's orbit, for every pair of bodies and many angles
 { const m = G.makeMaps(), atp = (B, r, d) => { const t = d * Math.PI / 180, rho = B.rho(r); return [B.cx + rho * Math.cos(t), B.cy - rho * Math.sin(t)]; };
   for (const [n, B1, r1, B2, r2] of [['EE', m.E, G.R_LEO, m.E, G.R_GEO], ['MM', m.M, G.R_M + 100, m.M, G.R_M + 20000], ['EM', m.E, G.R_LEO, m.M, G.R_M + 100], ['ME', m.M, G.R_M + 100, m.E, G.R_GEO]])
     for (let d1 = 0; d1 < 360; d1 += 45) for (let d2 = 0; d2 < 360; d2 += 15) {
       const q = atp(B2, r2, d2), a = G.bodyAt(m, ...atp(B1, r1, d1)), b = G.bodyAt(m, ...q);
       if (a.prim !== n[0] || b.prim !== n[1]) continue;
       const X = G.transfer(m, a, b);
-      for (const k of ['gt', 'et']) { const e = X[k].path.flat().at(-1); check(Math.hypot(e[0] - q[0], e[1] - q[1]) < .5, `${n} ${k} ${d1}->${d2}: path ends ${Math.hypot(e[0] - q[0], e[1] - q[1]).toFixed(1)} mm from Seldon-2`); }
+      const p1 = atp(B1, r1, d1);
+      for (const k of ['gt', 'et']) {
+        const all = [...X[k].lead, ...X[k].path.flat()], s0 = all[0], e = all.at(-1), qe = b.B.inv(e[0], e[1]);
+        check(Math.hypot(s0[0] - p1[0], s0[1] - p1[1]) < .5, `${n} ${k} ${d1}->${d2}: starts ${Math.hypot(s0[0] - p1[0], s0[1] - p1[1]).toFixed(1)} mm from Seldon-1`);
+        check(Math.abs(qe.rho - b.rho) < .5, `${n} ${k} ${d1}->${d2}: ends ${Math.abs(qe.rho - b.rho).toFixed(1)} mm off Seldon-2's orbit`);
+        if (X[k].lead.length) { const l = X[k].lead.at(-1), f = X[k].path[0][0]; check(Math.hypot(l[0] - f[0], l[1] - f[1]) < .5, `${n} ${k}: the coast meets the first burn`); }
+      }
     } }
 console.log(fails ? `\n${fails} checks FAILED` : '\nall checks passed');
 if (fails) process.exit(1);

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Orbital Table Demo</title>
-<link rel="stylesheet" href="gg-table.css">
+<script>document.write('<link rel="stylesheet" href="gg-table.css?v=' + Date.now() + '">')</script>   <!-- cache-bust like modes.js: the local server sends no caching headers -->
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; }
   canvas { display: block; }
@@ -71,7 +71,15 @@ const composer = new EffectComposer(renderer);
 // ---------- sky: the whole sky around a virtual camera ----------
 // NASA's Gaia-based star map, drawn by a full-screen shader from a zoom pyramid of tiles. The camera turns with the
 // Earth–Moon axis, pans with Earth, narrows its view as the pieces close in, and zooms with the table. Idle: a slow drift.
+// ?sky=true: the real background instead (tried Oct 7; the band look was kept as the default): the Earth–Moon plane seen from ecliptic
+// north has the south ecliptic pole behind it (Dorado, LMC ~5° off centre, no Milky Way band), fixed, no pan/roll/drift.
+const SKY_TRUE = Q.get('sky') === 'true';
 const SKY_TILT = -0.32;                                    // rad: galactic band vs the Earth–Moon axis
+// ?sky=true orientation, in the map's world frame (shader: +y = north galactic pole, longitude l at atan(z, x) = 180° - l); IAU J2000 ecliptic → galactic, obliquity 23.4393°
+const SKY_BASIS = new THREE.Matrix4().makeBasis(
+  new THREE.Vector3(0.05488, -0.86767, 0.49411),          // screen right: ecliptic λ 0° (l 96.34°, b -60.19°)
+  new THREE.Vector3(0.99382, -0.00035, -0.11099),         // screen up: ecliptic λ 90° (l 186.37°, b -0.02°)
+  new THREE.Vector3(0.09648, 0.49715, 0.86229));          // back toward the viewer: north ecliptic pole (view = SEP, l 276.38°, b -29.81°)
 const skyScene = new THREE.Scene();
 const skyCam = new THREE.PerspectiveCamera(55, 1, 1, 4000);
 // resolution: ?sky=4k|6k (default: 6k when the GPU allows; the ESO "large" file is 6000x3000, the biggest JPEG they publish)
@@ -241,8 +249,8 @@ function updateSky(E, M, dt, now) {
   SKY.yaw += (tYaw - SKY.yaw) * a; SKY.pitch += (tPitch - SKY.pitch) * a; SKY.fov += (tFov - SKY.fov) * a;
   SKY.z = SKY.z ?? 1; SKY.z += (1 / Math.max(1e-3, vz) - SKY.z) * (1 - Math.exp(-dt / .08));                // table zoom-out factor (tracks the lens closely)
   let dr = tRoll - SKY.roll; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); SKY.roll += dr * a;
-  SKY.x += ((ex - SW / 2) / SW * 90 - SKY.x) * a; SKY.y += (-(ey - SH / 2) / SH * 60 - SKY.y) * a;        // camera slides inside the star field
-  skyCam.rotation.set(SKY.pitch, SKY.yaw, SKY.roll, 'YXZ'); skyCam.position.set(SKY.x, SKY.y, 0);
+  if (SKY_TRUE) skyCam.quaternion.setFromRotationMatrix(SKY_BASIS);   // fixed: the true sky behind the table
+  else skyCam.rotation.set(SKY.pitch, SKY.yaw, SKY.roll, 'YXZ');
   if (Math.abs(skyCam.fov - SKY.fov) > .01) { skyCam.fov = SKY.fov; skyCam.updateProjectionMatrix(); }
   skyCam.updateMatrixWorld();
   const halfDiag = Math.atan(Math.tan(skyCam.fov * Math.PI / 360) * Math.hypot(1, skyCam.aspect));       // the whole sky fits at most once
@@ -271,7 +279,9 @@ function skyCalibrate() {                                  // threshold = SKY_EX
   let seed = 12345; const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;   // fixed seed: same threshold every load
   for (let k = 0; k < SKY_EXPO.n; k++) {
     cam.fov = SKY_FOV[0] + rnd() * (SKY_FOV[1] - SKY_FOV[0]); cam.aspect = innerWidth / Math.max(1, innerHeight); cam.updateProjectionMatrix();
-    cam.rotation.set((2 * rnd() - 1) * .3, rnd() * 2 * Math.PI, SKY_TILT + (rnd() - .5) * 1.2, 'YXZ');   // live-like: updateSky keeps pitch within ±0.28 rad, roll near the band tilt cam.updateMatrixWorld(); rot.setFromMatrix4(cam.matrixWorld);
+    if (SKY_TRUE) cam.quaternion.setFromRotationMatrix(SKY_BASIS);                   // live-like: the one fixed direction
+    else cam.rotation.set((2 * rnd() - 1) * .3, rnd() * 2 * Math.PI, SKY_TILT + (rnd() - .5) * 1.2, 'YXZ');   // pitch within ±0.28 rad, roll near the band tilt
+    cam.updateMatrixWorld(); rot.setFromMatrix4(cam.matrixWorld);
     const halfDiag = Math.atan(Math.tan(cam.fov * Math.PI / 360) * Math.hypot(1, cam.aspect));
     const z = Math.min(1 / (.25 * 32 ** rnd()), .8 * Math.PI / halfDiag);           // table zoom 0.25x .. 8x, log-uniform
     ms.push(skyViewMean(cam.projectionMatrixInverse, rot, z));
@@ -348,8 +358,12 @@ for (const k of ['earth', 'moon']) {
 // ---------- input: feed or demo ----------
 const pieces = {}, smooth = {};
 let feed = null, feedAt = -1e9;
-try { new EventSource('/events').onmessage = e => { try { feed = JSON.parse(e.data); feedAt = performance.now(); } catch {} }; } catch {}   // live.py's detector feed (absent on a plain file server: stays in demo mode)
+let everLive = false;
+try { new EventSource('/events').onmessage = e => { try { feed = JSON.parse(e.data); feedAt = performance.now(); everLive = true; } catch {} }; } catch {}   // live.py's detector feed (absent on a plain file server: stays in demo mode)
 const online = () => performance.now() - feedAt < 1500;
+// the table never drops back to demo once it has been live: a camera or live.py hiccup holds the last scene as it was
+// (no demo stand-ins, no stand-in models over the printed pieces, no DEMO note); the pieces resume when the feed does
+const liveView = () => everLive || online();
 for (const [k, [x, y]] of Object.entries(DEMO)) pieces[k] = { x_mm: x, y_mm: y, seen_ago: 0 };
 { // test hooks: ?mode=engage|dvmap  ?s1=700,300  ?s2=..  ?chip=2 (box index, after createModes) ?nomoon ?noearth ?end=left
   for (const [q, k] of [['s1', 'seldon-1'], ['s2', 'seldon-2'], ['earth', 'earth'], ['moon', 'moon']]) if (Q.get(q)) { const [x, y] = Q.get(q).split(',').map(Number); Object.assign(pieces[k], { x_mm: x, y_mm: y }); }
@@ -364,7 +378,7 @@ addEventListener('pointerdown', e => {
   if (calibrating) return;
   const [x, y] = fromPx(e.clientX, e.clientY);
   let best = null, bd = 70;
-  for (const [k, p] of Object.entries(smooth)) { const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = k; } }
+  for (const [k, p] of Object.entries(smooth)) { if (k === 'hand' && !modes.handMode) continue; const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = k; } }   // the hand only while its slider shows
   drag = best;
 });
 addEventListener('pointermove', e => { if (drag) { const [x, y] = fromPx(e.clientX, e.clientY); Object.assign(pieces[drag], { x_mm: x, y_mm: y }); } });
@@ -540,7 +554,7 @@ modes = createModes({
 { const b = modes.boxRect(Q.get('chip') != null ? +Q.get('chip') : 0); pieces.chip = { x_mm: b.cx, y_mm: b.cy, seen_ago: 0 }; }
 // engagement mode: Earth sits at the table centre and the Moon is set aside (demo stand-ins; on the real table, move the pieces).
 // Both engagement and orbits put the demo hand on the zoom slider and take the chip away (no delta-v map).
-let parked = null; const slParked = {};
+let parked = null; const slParked = {}, lifted = {};
 function engagePieces() {
   const eng = modes.mode === 'engage', orb = modes.mode === 'orbits';
   if (parked) {   // undo the previous mode's stand-ins (Earth / Moon only if that mode moved them)
@@ -553,7 +567,10 @@ function engagePieces() {
   if (eng) {
     pieces.earth = { x_mm: SW / 2, y_mm: SH / 2, seen_ago: 0 }; delete pieces.moon;
     const h = modes.zoomHandPos(); pieces.hand = { x_mm: h.x, y_mm: h.y, seen_ago: 0 };   // demo hand, resting on the zoom slider at the current zoom
-  } else if (!online()) Object.assign(pieces, modes.orbitsDemo(pieces));   // demo stand-ins: Seldons in LEO and in lunar orbit (true scale: Earth and Moon 970 mm apart)
+  } else if (!liveView()) {
+    Object.assign(pieces, modes.orbitsDemo(pieces, Q.has('nomoon')));   // demo stand-ins: Seldons in LEO and in lunar orbit (true scale: Earth and Moon 970 mm apart)
+    const h = modes.zoomHandPos(); pieces.hand = { x_mm: h.x, y_mm: h.y, seen_ago: 0 };   // demo hand for the zoom slider (shown while Earth or the Moon is off the table)
+  }
 }
 engagePieces();
 // test hook: ?sl=o:thrust:0.3,a:fuel:20 puts those slider codes at those values
@@ -564,6 +581,19 @@ addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (k === 'm') { modes.setMode(modes.mode === 'engage' ? 'orbits' : 'engage'); engagePieces(); }   // orbits (kiosk) <-> real engagement sim
   if (k === 't') modes.setTopo(!modes.topo);
+  if ((k === 'e' || k === 'l') && !liveView()) {   // demo: lift Earth (e) or the Moon (l, luna) off the table and put it back
+    const id = k === 'e' ? 'earth' : 'moon', keep = ['earth', 'seldon-1', 'seldon-2'];
+    if (pieces[id]) {
+      lifted[id] = pieces[id]; delete pieces[id];
+      if (id === 'moon' && modes.mode === 'orbits') {   // the LEO / GEO view: Earth centred, Seldon-1 in LEO, Seldon-2 in GEO (put back with the Moon)
+        lifted.scene = Object.fromEntries(keep.filter(q => pieces[q]).map(q => [q, { ...pieces[q] }]));
+        Object.assign(pieces, modes.orbitsDemo(pieces, true));
+      }
+    } else if (lifted[id]) {
+      pieces[id] = lifted[id]; delete lifted[id];
+      if (id === 'moon' && lifted.scene) { for (const [q, p] of Object.entries(lifted.scene)) pieces[q] = p; delete lifted.scene; }
+    }
+  }
   if (e.key === 'Enter' && modes.mode === 'engage') fetch(`http://${location.hostname || 'localhost'}:8791/control`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"start":true}' }).catch(() => {});   // same as the laptop's Start                  // topography on/off (the chip does this on the table)
   if (k === '[' || k === ']') { const b = Math.max(0, Math.min(modes.DV_MAX, modes.budget + (k === ']' ? .5 : -.5))); modes.setBudget(b); if (pieces.chip) pieces.chip.y_mm = modes.trackY(b); }   // budget ±0.5 km/s (the chip follows)
 });
@@ -577,13 +607,23 @@ function tick(now) {
     if (feed.screen_mm && (feed.screen_mm[0] !== SW || feed.screen_mm[1] !== SH)) { [SW, SH] = feed.screen_mm; layout(); }
     for (const k of Object.keys(ROLES)) { const p = feed.pieces?.[k]; if (p) pieces[k] = p; else delete pieces[k]; }
     if (feed.chip) pieces.chip = feed.chip;
-    if (feed.hand) pieces.hand = feed.hand; else if (feed.pieces) delete pieces.hand;   // camera: hand position over the zoom slider
+    {   // camera: fingertips from round 4's person outlines; the hand is the one nearest the zoom track (when it is in play)
+      const g = modes.handTrack(), dx = g.t1.x - g.t0.x, dy = g.t1.y - g.t0.y, L2 = dx * dx + dy * dy;
+      const dist = h => { const u = Math.max(0, Math.min(1, ((h.x_mm - g.t0.x) * dx + (h.y_mm - g.t0.y) * dy) / L2)); return Math.hypot(h.x_mm - g.t0.x - dx * u, h.y_mm - g.t0.y - dy * u); };
+      const h = modes.handMode && (feed.hands || []).length ? feed.hands.reduce((a, b) => dist(a) <= dist(b) ? a : b) : feed.hand;
+      if (h && (!feed.hands || dist(h) < 60)) pieces.hand = { ...h, seen_ago: 0 }; else delete pieces.hand;
+    }
   }
   document.getElementById('feed').style.background = live ? '#dde3e4' : '#5c6b70';
-  { const t = !live ? 'DEMO · DRAG PIECES · SCROLL TO ROTATE' : feed.calibrated ? '' : 'UNCALIBRATED · PRESS C'; if (noteEl.textContent !== t) noteEl.textContent = t; }
-  const a = 1 - Math.exp(-dt / Math.max(.001, live && feed.page_tau_s != null ? feed.page_tau_s : .09));   // easing time: live.py's tuning (tune.html)
+  { const t = !liveView() ? 'DEMO · DRAG PIECES · SCROLL TO ROTATE' : !live || feed.calibrated ? '' : 'UNCALIBRATED · PRESS C'; if (noteEl.textContent !== t) noteEl.textContent = t; }
+  // easing toward the feed (live.py's tuning, tune.html): calm for still pieces, close-following for moving ones, which are
+  // also drawn a little ahead along their velocity to make up for the camera + model delay
+  const tauStill = live && feed.page_tau_s != null ? feed.page_tau_s : .09, tauMove = live && feed.page_tau_move_s != null ? feed.page_tau_move_s : tauStill;
+  const lead = live && feed.page_lead_s != null ? feed.page_lead_s : 0;
   for (const [k, p] of Object.entries(pieces)) {
-    if (!smooth[k]) smooth[k] = { x: p.x_mm, y: p.y_mm }; else { smooth[k].x += (p.x_mm - smooth[k].x) * a; smooth[k].y += (p.y_mm - smooth[k].y) * a; }
+    const vx = p.vx || 0, vy = p.vy || 0, f = Math.min(1, Math.hypot(vx, vy) / 150);   // fully "moving" from 150 mm/s
+    const a = 1 - Math.exp(-dt / Math.max(.001, tauStill + (tauMove - tauStill) * f)), tx = p.x_mm + vx * lead, ty = p.y_mm + vy * lead;
+    if (!smooth[k]) smooth[k] = { x: p.x_mm, y: p.y_mm }; else { smooth[k].x += (tx - smooth[k].x) * a; smooth[k].y += (ty - smooth[k].y) * a; }
   }
   for (const k of Object.keys(smooth)) if (!pieces[k]) delete smooth[k];
   const held = k => pieces[k] && pieces[k].seen_ago > .6;
@@ -596,10 +636,16 @@ function tick(now) {
   }
   { const P = smooth.chip; chipMesh.visible = !!P; if (P) chipMesh.position.set(P.x, -P.y, 1); }
   for (const [k, m] of Object.entries(slMeshes)) m.visible = !!smooth[k];
-  handMesh.visible = !!smooth.hand && !online(); if (smooth.hand) handMesh.position.set(smooth.hand.x, -smooth.hand.y, 1.6);   // demo stand-in only
+  const handIdle = modes.mode === 'orbits' && pieces.hand && drag !== 'hand' && !liveView();   // demo: the stand-in hand touches the table only while dragged
+  if (handIdle) { const h = modes.zoomHandPos(); Object.assign(pieces.hand, { x_mm: h.x, y_mm: h.y }); smooth.hand = { x: h.x, y: h.y }; }   // otherwise it rides the knob (and the zoom can ease to a view's default)
+  handMesh.visible = !!smooth.hand && !liveView() && modes.handMode; if (smooth.hand) handMesh.position.set(smooth.hand.x, -smooth.hand.y, 1.6);   // demo stand-in only
   for (const [k, P] of Object.entries(smooth)) if (k.startsWith('sl:')) slMesh(k).position.set(P.x, -P.y, 1.5);
   const view = {};
-  for (const [k, P] of Object.entries(smooth)) view[k] = { x_mm: P.x, y_mm: P.y };
+  for (const [k, P] of Object.entries(smooth)) {   // moving: the tracker says so, or the eased position is still catching up
+    const p = pieces[k]; view[k] = { x_mm: P.x, y_mm: P.y, moving: !!p && (!!p.moving || Math.hypot(p.x_mm - P.x, p.y_mm - P.y) > 4) };
+  }
+  if (handIdle) delete view.hand;
+  if (liveView() && pieces.hand) view.hand = { x_mm: pieces.hand.x_mm, y_mm: pieces.hand.y_mm };   // live: the raw fingertip, so the sliders can tell a jump from a drag
   modes.update(view, dt, now);
   updateSky(smooth.earth, smooth.moon, dt, now);
 
@@ -609,7 +655,7 @@ function tick(now) {
   for (const id of SATS) if (models[id]) models[id].scale.setScalar(fig ? ORB_SELDON_SCALE : SELDON_SCALE);
   for (const [k, r] of Object.entries(baseRings)) { const P = smooth[k]; r.visible = !!P && !fig; if (P) r.position.set(P.x, -P.y, 0); }
   for (const [k, g] of Object.entries(models)) {   // live: the printed Earth and Seldons stand there, so no stand-ins under them
-    const P = smooth[k]; g.visible = !!P && !(online() && (k === 'earth' || SATS.includes(k))); if (!P) continue;
+    const P = smooth[k]; g.visible = !!P && !(liveView() && (k === 'earth' || k === 'moon' || SATS.includes(k))); if (!P) continue;   // live: the printed pieces stand there
     g.position.x = P.x; g.position.y = -P.y; g.rotation.z = g.userData.rot;
   }
   models.earth.userData.spin.rotation.y += dt * .08; models.earth.userData.clouds.rotation.y += dt * .1;

@@ -41,6 +41,7 @@ html, body { background: var(--gg-black); color: var(--gg-fog-100); font-family:
 .mt-chip.on { color: var(--gg-white); }
 .mt-slv { font-family: var(--font-display); font-weight: 500; font-size: max(10px, calc(var(--mm) * 10)); color: var(--gg-white); font-variant-numeric: tabular-nums; }
 .mt-slv i { font-size: .6em; }
+.mt.mt-slv.mono { font-family: var(--font-mono); font-weight: 400; }   /* orbits view: mono like the rest of its text */
 .mt-readout { font-family: var(--font-display); font-weight: 500; font-size: max(12px, calc(var(--mm) * 20)); line-height: 1; color: var(--gg-white); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
 .mt-readout i { font-size: .45em; }
 .mt-foot { font-size: max(7px, calc(var(--mm) * 6.5)); letter-spacing: .12em; text-transform: uppercase; color: var(--gg-fog-400); }
@@ -59,11 +60,23 @@ html, body { background: var(--gg-black); color: var(--gg-fog-100); font-family:
 .rail .xf-mets { display: flex; gap: calc(var(--mm) * 16); align-items: flex-end; }
 .rail .metric .mv.over { color: #e2604f; }
 
-/* ---- orbits (kiosk) view: readability first. Text sits on dark plates; colours identify things, not decorate ---- */
-.mt.mt-tag { font-family: var(--font-display); font-size: max(11px, calc(var(--mm) * 9.5)); color: var(--gg-white); background: rgba(10,13,13,.82);
-  padding: calc(var(--mm) * 1.5) calc(var(--mm) * 4); border-radius: calc(var(--mm) * 2); letter-spacing: .01em; font-variant-numeric: tabular-nums; }
-.mt.mt-tag span { font-family: var(--font-mono); letter-spacing: .1em; }
-.mt.mt-tag i { font-size: .8em; color: var(--gg-fog-200); }
+/* ---- orbits (kiosk) view: readability first. Space Mono throughout, as on the brand's wall screens; no plates —
+   a soft ink halo keeps text legible over the sky. Colours identify things, not decorate ---- */
+.mt.mt-tag, .mt.mt-xfer { --halo: 0 0 calc(var(--mm) * .8) var(--gg-black), 0 0 calc(var(--mm) * 2.5) var(--gg-black), 0 0 calc(var(--mm) * 6) rgba(10,13,13,.85);
+  text-shadow: var(--halo); font-family: var(--font-mono); color: var(--gg-white); font-variant-numeric: tabular-nums; }
+.mt.mt-tag { font-size: max(11px, calc(var(--mm) * 9)); letter-spacing: .02em; padding: calc(var(--mm) * 1.5) calc(var(--mm) * 3); }
+.mt.mt-tag span { letter-spacing: .1em; }
+.mt.mt-tag i { font-size: .75em; color: var(--gg-fog-200); }
+.mt.mt-xfer { text-align: center; line-height: 1.2; }
+.mt-xfer .xg { display: inline-grid; grid-template-columns: repeat(6, auto); row-gap: calc(var(--mm) * 2.25); align-items: baseline; }
+.mt-xfer .xh { font-size: max(12px, calc(var(--mm) * 9.75)); letter-spacing: .14em; margin-right: -.14em; color: var(--gg-fog-300); text-align: right; }   /* right edge = the number's right edge */
+.mt-xfer .xk { font-size: max(20px, calc(var(--mm) * 21)); letter-spacing: .06em; text-align: left; padding-right: calc(var(--mm) * 7.5); }
+.mt-xfer .xn { font-size: max(12px, calc(var(--mm) * 9.75)); letter-spacing: .14em; color: var(--gg-fog-200); text-align: left; padding-right: calc(var(--mm) * 15); }
+.mt-xfer .xv { font-size: max(22px, calc(var(--mm) * 24)); letter-spacing: -.01em; text-align: right; }
+.mt-xfer .xu { font-size: max(12px, calc(var(--mm) * 10.5)); letter-spacing: .06em; color: var(--gg-fog-200); text-align: left; padding: 0 calc(var(--mm) * 15) 0 calc(var(--mm) * 2.25); }
+.mt-xfer .xg > :nth-child(6n) { padding-right: 0; }
+.mt-xfer .xf { margin-top: calc(var(--mm) * 6); font-size: max(14px, calc(var(--mm) * 11.25)); letter-spacing: .14em; color: var(--gg-fog-200); }
+.mt-xfer .xf { padding-left: .14em; }   /* balances the trailing tracking so the line centres */
 .mt.mt-tag.dim { color: var(--gg-fog-200); font-size: max(10px, calc(var(--mm) * 8)); }
 .mt.xp { white-space: normal; box-sizing: border-box; padding: calc(var(--mm) * 5) calc(var(--mm) * 7); background: rgba(10,13,13,.88);
   border: 1px solid rgba(246,248,248,.16); border-radius: calc(var(--mm) * 4); font-family: var(--font-display); color: var(--gg-white); line-height: 1.25; }
