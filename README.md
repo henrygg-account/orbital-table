@@ -17,7 +17,7 @@ Deep Star Maps 2020; credit NASA/GSFC SVS, Gaia DR2: ESA/Gaia/DPAC).
 Run the live table: `cd camera/training && .venv/bin/python live.py --camera arducam --size 2048x1536`, then open
 http://localhost:8780/demo.html (launch from Terminal: it needs camera permission).
 
-Windows: `.venv\Scripts\python live.py --camera arducam --size 2048x1536` (DirectShow; needs `pygrabber`, and runs
+Windows: `.venv\Scripts\python live.py --camera arducam --size 1280x960` (same view as 2048x1536, 60% cheaper to decode; the calibration is rescaled. DirectShow; needs `pygrabber`, and runs
 `best.onnx` on DirectML when it exists with `onnxruntime-directml` installed, else `best.pt` on CPU).
 Tracking smoothness (deadbands, lock-in time, smoothing, confidence) is tuned live at http://localhost:8780/tune.html
 and kept in `camera/training/tuning.json`.

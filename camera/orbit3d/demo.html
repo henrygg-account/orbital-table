@@ -60,13 +60,22 @@ const ORB_SELDON_SCALE = +(Q.get('seldonscale') ?? .5);   // orbits view: Seldon
 const MARG = 24, END = Q.get('end') === 'left' ? 'left' : 'right';
 
 // ---------- renderer ----------
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+// Windows (the ThinkPad's Radeon iGPU also runs live.py's detector): its 4K TV at 300% scaling made this draw 2560x1440
+// as fast as the browser would, starving the model. There: at most ?maxpx= pixels (default ~1080p; the TV upscales),
+// at most ?fps= frames a second (default 30: the TV runs at 29 Hz over HDMI), and no canvas MSAA (the composer draws
+// into its own targets, so it only cost bandwidth). The Mac keeps 2x, every frame, MSAA.
+const WIN = /Windows/.test(navigator.userAgent);
+const PERF = { maxPx: +(Q.get('maxpx') ?? (WIN ? 2.1e6 : Infinity)), fps: +(Q.get('fps') ?? (WIN ? 30 : 0)),
+  maxDpr: +(Q.get('maxdpr') ?? 2), msaa: +(Q.get('msaa') ?? 0) };   // ?msaa=4: multisampled composer targets (smooth line edges)
+const pixelRatio = (w, h) => Math.max(.5, Math.min(PERF.maxDpr, devicePixelRatio, Math.sqrt(PERF.maxPx / (w * h))));
+const renderer = new THREE.WebGLRenderer({ antialias: !WIN, powerPreference: 'high-performance' });
+renderer.setPixelRatio(pixelRatio(innerWidth, innerHeight));
 document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = null;                                   // the sky scene is drawn first, the table scene over it
 const camera = new THREE.OrthographicCamera(0, 1, 0, -1, -200, 200);
-const composer = new EffectComposer(renderer);
+const composer = PERF.msaa ? new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: PERF.msaa }))
+  : new EffectComposer(renderer);
 
 // ---------- sky: the whole sky around a virtual camera ----------
 // NASA's Gaia-based star map, drawn by a full-screen shader from a zoom pyramid of tiles. The camera turns with the
@@ -521,6 +530,7 @@ addEventListener('wheel', e => {
 let modes = null;
 function layout() {
   const iw = innerWidth, ih = innerHeight;
+  renderer.setPixelRatio(pixelRatio(iw, ih)); composer.setPixelRatio(pixelRatio(iw, ih));
   renderer.setSize(iw, ih); composer.setSize(iw, ih); bloom.setSize(iw, ih);
   for (const m of lineMats) m.resolution.set(iw, ih);
   S = Math.min(iw / SW, ih / SH);
@@ -599,8 +609,10 @@ addEventListener('keydown', e => {
 });
 
 // ---------- frame ----------
-let last = performance.now();
+let last = performance.now(), lastDraw = -1e9;
 function tick(now) {
+  if (PERF.fps && now - lastDraw < 1000 / PERF.fps - 4) { requestAnimationFrame(tick); return; }   // Windows: 30 fps cap
+  lastDraw = now;
   const dt = Math.min(.05, Math.max(0, (now - last) / 1000)); last = now;
   const live = online();
   if (live && feed) {

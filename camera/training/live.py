@@ -9,6 +9,7 @@ Fastest on each laptop: export.py writes best.mlpackage (Mac, Neural Engine) and
 
 Recording training video while the page runs: GET /record?min=10 starts, /record/stop stops (files in videos/);
 record-guide.html walks through a shot list and POSTs /record/log (step times, saved as videos/<rec>.steps.json).
+A day of passive collection: GET /record?min=1440&active=1 (only while hands or pieces move, 10 fps, 15 min files).
 
 Keys: q quits, s saves the current frame to data/raw (to add to training later).
 Contract with the pages (pieces.json, /events, /calibrate, /marker/<id>.png): ../orbit3d/FEED.md.
@@ -17,6 +18,12 @@ Everything outside main() is importable without a camera (see test_live.py).
 import argparse, json, math, os, re, sys, threading, time, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+if sys.platform == 'win32':
+    # Before torch loads (ultralytics, in main): its OpenMP workers otherwise spin for a while after every small CPU op
+    # of predict()'s pre/postprocessing, keeping all 8 cores busy, and on the ThinkPad's APU (CPU and Radeon share one
+    # power budget and memory bus) that slowed the DirectML model from 33 to 95 ms a frame. Sleeping workers: no cost.
+    os.environ.setdefault('OMP_WAIT_POLICY', 'PASSIVE')
 
 import cv2
 import numpy as np
@@ -45,11 +52,18 @@ def load_config(path=PIECES_JSON):
     return cfg
 
 
-def load_calib(path=None):
+def load_calib(path=None, frame_wh=None):
+    """H (camera px -> screen mm) for frames of frame_wh. A calibration saved at another capture size (its 'frame_wh')
+    is rescaled, so e.g. the ThinkPad can capture 1280x960 with a calibration made at 2048x1536 (same field of view).
+    Files without 'frame_wh' (older ones) are used as they are."""
     try:
-        return np.array(json.loads(Path(path or CALIB_JSON).read_text())['H'], dtype=np.float64).reshape(3, 3)
+        c = json.loads(Path(path or CALIB_JSON).read_text())
+        H = np.array(c['H'], dtype=np.float64).reshape(3, 3)
     except (OSError, ValueError, KeyError):
         return None
+    if frame_wh and c.get('frame_wh') and tuple(c['frame_wh']) != tuple(frame_wh):
+        H = H @ np.diag([c['frame_wh'][0] / frame_wh[0], c['frame_wh'][1] / frame_wh[1], 1.0])
+    return H
 
 
 def apply_h(H, x, y):
@@ -316,8 +330,11 @@ def corner_calibration(corners, bezel, screen_mm):
     return cv2.getPerspectiveTransform(np.float32(corners).reshape(4, 2), mm)
 
 
-def save_calib(H, screen_mm, path=None):
-    Path(path or CALIB_JSON).write_text(json.dumps({'H': np.asarray(H).tolist(), 'screen_mm': screen_mm, 't': time.time()}))
+def save_calib(H, screen_mm, path=None, frame_wh=None):
+    c = {'H': np.asarray(H).tolist(), 'screen_mm': screen_mm, 't': time.time()}
+    if frame_wh:
+        c['frame_wh'] = [int(frame_wh[0]), int(frame_wh[1])]   # the capture size H is in (load_calib rescales)
+    Path(path or CALIB_JSON).write_text(json.dumps(c))
 
 
 class CalibRequest:
@@ -337,7 +354,7 @@ class CalibRequest:
             return False
         try:
             H, rms, n = compute_calibration(self.layout, self.found)
-            save_calib(H, cfg['screen_mm'])
+            save_calib(H, cfg['screen_mm'], frame_wh=(frame.shape[1], frame.shape[0]))
             with lock:
                 state['H'] = H
             self.result = {'ok': True, 'markers_found': n, 'rms_mm': round(rms, 2)}
@@ -352,7 +369,7 @@ def snapshot():
     now = time.time()
     with lock:
         cfg, trk = state['cfg'], state['tracker']
-        return {'t': now, 'fps': round(state['fps'], 1), 'model_ms': round(state.get('model_ms', 0)), 'backend': state.get('backend'),
+        return {'t': now, 'fps': round(state['fps'], 1), 'model_ms': round(state.get('model_ms', 0)), 'model_parts': state.get('model_parts'), 'backend': state.get('backend'),
                 'idle': state.get('idle', False), 'calibrated': state['H'] is not None,
                 'screen_mm': cfg['screen_mm'], 'pieces': trk.feed(now), 'hands': state.get('hands', []),
                 'rec': state['rec'].status() if state.get('rec') else None,
@@ -385,7 +402,9 @@ class Handler(BaseHTTPRequestHandler):
                     if state.get('rec') and state['rec'].status()['recording']:
                         res = {'ok': False, 'error': 'already recording', **state['rec'].status()}
                     else:
-                        state['rec'] = Recorder(state['grab'], float(q.get('min', 10)))
+                        active = q.get('active') == '1'          # ?active=1: busy frames only, 10 fps, 15 min files
+                        state['rec'] = Recorder(state['grab'], float(q.get('min', 10)),
+                                                fps=float(q.get('fps', 10 if active else 30)), active=active)
                         res = {'ok': True, **state['rec'].status()}
                 self._send(json.dumps(res).encode(), 'application/json')
             elif path == '/record/stop':
@@ -442,7 +461,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or b'{}')
                     H = corner_calibration(body['corners'], body.get('bezel', {}), state['cfg']['screen_mm'])
-                    save_calib(H, state['cfg']['screen_mm'])
+                    save_calib(H, state['cfg']['screen_mm'], frame_wh=state.get('frame_wh'))
                     with lock:
                         state['H'] = H
                     res = {'ok': True}
@@ -453,7 +472,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     pts = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or b'{}')['points']
                     H, rms = compute_point_calibration(pts, state['frame_wh'], state['cfg'])
-                    save_calib(H, state['cfg']['screen_mm'])
+                    save_calib(H, state['cfg']['screen_mm'], frame_wh=state.get('frame_wh'))
                     with lock:
                         state['H'] = H
                     res = {'ok': True, 'points': len(pts), 'rms_mm': round(rms, 2)}
@@ -557,35 +576,72 @@ def find_camera(name='iphone'):
 
 
 class Recorder:
-    """Writes every new camera frame to an .mp4 on its own thread, for a fixed time (training video)."""
-    def __init__(self, grab, minutes, fps=30):
-        f = grab.frame
-        self.path = HERE / 'videos' / f'rec_{time.strftime("%Y%m%d-%H%M%S")}.mp4'
-        self.path.parent.mkdir(exist_ok=True)
-        self.out = cv2.VideoWriter(str(self.path), cv2.VideoWriter_fourcc(*'avc1'), fps, (f.shape[1], f.shape[0]))
-        self.grab, self.t0, self.end, self.n, self.stop = grab, time.time(), time.time() + 60 * minutes, 0, False
+    """Writes new camera frames to an .mp4 on its own thread, for a fixed time (training video).
+
+    Default: every frame, one file (record-guide.html's shot list). active=True (GET /record?active=1, for a day of
+    passive collection): only frames while the table is busy (a hand over it or a piece moving: not state['idle']), at
+    most `fps` a second, in SEGMENT_MIN files; a segment that caught nothing is deleted, so idle time costs no disk.
+    Each kept segment gets <name>.json with the calibration it was shot under (for labelling)."""
+    SEGMENT_MIN = 15
+
+    def __init__(self, grab, minutes, fps=30, active=False):
+        self.grab, self.fps, self.active = grab, fps, active
+        self.t0, self.end, self.stop = time.time(), time.time() + 60 * minutes, False
+        self.n, self.kept, self.dropped, self.out = 0, [], 0, None
+        (HERE / 'videos').mkdir(exist_ok=True)
+        self._open()
         threading.Thread(target=self._run, daemon=True).start()
 
+    def _open(self):
+        f = self.grab.frame
+        self.path = HERE / 'videos' / f'rec_{time.strftime("%Y%m%d-%H%M%S")}.mp4'
+        api = [cv2.CAP_MSMF] if sys.platform == 'win32' else []    # Windows: H.264 via Media Foundation (OpenCV's FFmpeg can't)
+        self.out = cv2.VideoWriter(str(self.path), *api, cv2.VideoWriter_fourcc(*'avc1'), self.fps, (f.shape[1], f.shape[0]))
+        self.seg_t0, self.seg_n = time.time(), 0
+
+    def _close(self):
+        self.out.release()
+        if self.seg_n == 0:                                    # nothing happened: no file
+            self.path.unlink(missing_ok=True); self.dropped += 1
+            return
+        self.kept.append(self.path.name)
+        if self.active:
+            H = state.get('H')
+            self.path.with_suffix('.json').write_text(json.dumps({
+                'frames': self.seg_n, 'fps': self.fps, 'active_only': True, 'frame_wh': state.get('frame_wh'),
+                'H': None if H is None else np.asarray(H).tolist(), 'screen_mm': state['cfg']['screen_mm'],
+                'start': self.seg_t0, 'end': time.time()}))
+        print(f'recording: kept {self.path.name}, {self.seg_n} frames', flush=True)
+
     def _run(self):
-        seq = 0
+        seq, last = 0, 0.0
         while not self.stop and time.time() < self.end:
             seq, f = self.grab.next(seq)
-            if f is not None:
-                self.out.write(f); self.n += 1
-        self.out.release()
-        print(f'recording done: {self.path.name}, {self.n} frames in {time.time() - self.t0:.0f} s', flush=True)
+            if f is None:
+                continue
+            now = time.time()
+            if self.active:
+                if now - self.seg_t0 > 60 * self.SEGMENT_MIN:
+                    self._close(); self._open()
+                if state.get('idle') or now - last < 1 / self.fps:
+                    continue
+                last = now
+            self.out.write(f); self.n += 1; self.seg_n += 1
+        self._close()
+        print(f'recording done: {self.n} frames in {time.time() - self.t0:.0f} s, files {self.kept}', flush=True)
 
     def status(self):
         live = not self.stop and time.time() < self.end
-        return {'file': self.path.name, 'frames': self.n, 'recording': live,
+        return {'file': self.path.name, 'frames': self.n, 'recording': live, 'active_only': self.active,
+                'files_kept': len(self.kept) + (1 if live and self.seg_n else 0), 'segments_dropped': self.dropped,
                 'left_s': round(max(0, self.end - time.time())) if live else 0}
 
 
 class LatestFrame:
     """Reads the camera on its own thread and keeps only the newest frame, so inference never waits
     on capture and never works on a stale, queued frame."""
-    def __init__(self, cap):
-        self.cap, self.frame, self.seq = cap, None, 0
+    def __init__(self, cap, exposure=None):
+        self.cap, self.frame, self.seq, self.exposure = cap, None, 0, exposure   # exposure: FixedRateExposure (Windows)
         self.cv = threading.Condition()
         threading.Thread(target=self._run, daemon=True).start()
 
@@ -593,15 +649,56 @@ class LatestFrame:
         while True:
             ok, f = self.cap.read()
             if ok:
+                if self.exposure:
+                    self.exposure.step(f)
                 with self.cv:
                     self.frame, self.seq = f, self.seq + 1
                     self.cv.notify_all()
+
 
     def next(self, after):
         """Newest frame with seq > after (waits for one)."""
         with self.cv:
             self.cv.wait_for(lambda: self.seq > after, timeout=1.0)
             return self.seq, self.frame
+
+
+class FixedRateExposure:
+    """Windows (DirectShow): in room light the Arducam's auto exposure lengthens each frame to ~1/14 s, so it delivers
+    14 fps, not 30. Instead: take the brightness auto exposure settles on, lock the exposure at the longest that still
+    gives 30 fps (2^-5 s ~ 31 ms) and steer the gain to hold that brightness: the same picture, at 30 fps. Measured on
+    the table (Oct 12): auto 14.2 fps / brightness 86; locked -5 with gain 64: 30.5 fps / 92. Runs on the capture thread,
+    the only one that touches the camera."""
+    EXPOSURE = -5
+    GAIN_MAX = 100
+    PER_GAIN = 0.75          # brightness per gain step (gain 32 -> 68, 64 -> 92)
+
+    def __init__(self, cap):
+        self.cap = cap
+        cap.set(cv2.CAP_PROP_GAIN, 0)                              # auto first, at the default gain (a previous run
+        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)                 # may have left both locked; auto doesn't reset gain)
+        t, means = time.time(), []
+        while time.time() - t < 2.0:
+            ok, f = cap.read()
+            if ok:
+                means.append(float(f[::8, ::8].mean()))
+        self.target = float(np.mean(means[-8:])) if means else 90.0
+        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
+        cap.set(cv2.CAP_PROP_EXPOSURE, self.EXPOSURE)
+        self.gain = float(np.clip(64 + (self.target - 92) / self.PER_GAIN, 0, self.GAIN_MAX))
+        cap.set(cv2.CAP_PROP_GAIN, self.gain)
+        self.n = 0
+        print(f'camera: exposure locked at 2^{self.EXPOSURE} s for 30 fps, gain steered to brightness {self.target:.0f} '
+              f'(auto exposure: {len(means) / 2:.0f} fps)')
+
+    def step(self, f):
+        self.n += 1
+        if self.n % 15:                                            # twice a second
+            return
+        err = self.target - float(f[::8, ::8].mean())
+        if abs(err) > 2:
+            self.gain = float(np.clip(self.gain + 0.5 * err / self.PER_GAIN, 0, self.GAIN_MAX))
+            self.cap.set(cv2.CAP_PROP_GAIN, self.gain)
 
 
 def use_directml():
@@ -642,6 +739,9 @@ def main():
     ap.add_argument('--port', type=int, default=8780)
     ap.add_argument('--no-browser', action='store_true')
     ap.add_argument('--no-window', action='store_true', help='no OpenCV preview (headless)')
+    ap.add_argument('--exposure', choices=('fixed', 'auto'), default='fixed',
+                    help="Windows: 'fixed' = 30 fps with the gain holding auto exposure's brightness (FixedRateExposure); "
+                         "'auto' = the camera's own (drops to ~14 fps in room light)")
     ap.add_argument('--idle-hz', type=float, default=5, help='model runs per second while nothing moves (0: always full speed)')
     a = ap.parse_args()
     if sys.platform == 'win32':            # it would "fix" onnxruntime-directml by installing the CPU onnxruntime over it
@@ -669,11 +769,13 @@ def main():
             wake.read()
         wake.release()
     cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW if win else cv2.CAP_AVFOUNDATION)
-    if win:                                # UVC: MJPG, or DirectShow falls back to raw YUY2 at a low frame rate
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, cw); cap.set(cv2.CAP_PROP_FRAME_HEIGHT, ch)
+    if win:                                # UVC: MJPG, after the size and with no CAP_PROP_FPS: any other order, or
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))   # setting the fps, gives raw YUY2 at 5 fps at 1280x960
     if not cap.isOpened():
         raise SystemExit(f'could not open {dev}')
+    exposure = FixedRateExposure(cap) if win and a.exposure == 'fixed' else None
+    state['H'] = load_calib(frame_wh=(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
     dml = win and a.weights.endswith('.onnx') and use_directml()
     model = YOLO(a.weights, task='segment' if '-seg' in str(a.weights) else 'detect')   # round 4 is an outline (segment) model
     if a.weights.endswith(('.mlpackage', '.onnx')):
@@ -686,7 +788,7 @@ def main():
     backend = ('Core ML' if a.weights.endswith('.mlpackage') else f"ONNX on {'DirectML' if dml else 'the CPU'}"
                if a.weights.endswith('.onnx') else f"PyTorch on {dev_kw['device']}")
     state['backend'] = backend
-    grab = state['grab'] = LatestFrame(cap)
+    grab = state['grab'] = LatestFrame(cap, exposure)
     seq = 0
     print(f'{dev} -> {a.weights} ({backend})   (q quit, s save frame)   calibrated: {state["H"] is not None}   '
           f'orbit demo: http://localhost:{a.port}')
@@ -721,6 +823,8 @@ def main():
                           agnostic_nms=True, verbose=False, **dev_kw)[0]   # one class per object
         ms = 0.9 * ms + 0.1 * (time.time() - t0) * 1000
         state['model_ms'] = ms
+        state['model_parts'] = {k: round(0.9 * (state.get('model_parts') or {}).get(k, v) + 0.1 * v, 1)   # ultralytics' own split
+                                for k, v in r.speed.items()}
         per_role, raw = {}, []
         boxes = [[x1 + cx0, y1 + cy0, x2 + cx0, y2 + cy0] for x1, y1, x2, y2 in r.boxes.xyxy.tolist()]   # crop -> frame px
         scores = colour_scores(frame, boxes)                       # second opinion on identity (colorcheck.py)
