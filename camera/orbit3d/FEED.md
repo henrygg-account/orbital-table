@@ -32,6 +32,9 @@ The page renders on the TV underneath them, so everything is in **screen millime
 - `u, v`: raw 0–1 camera-frame position. `x_mm, y_mm`: screen position after homography + parallax.
 - Uncalibrated: `x_mm = u * W_mm`, `y_mm = v * H_mm`.
 - A piece stays listed with its last position until `seen_ago > 10`.
+- `fps`: model runs per second; `model_ms`: time per run; `backend`: what runs it (`Core ML`, `ONNX on DirectML`,
+  `PyTorch on cpu`, ...); `idle`: true while nothing moves and no hand is over the screen, when the model runs only
+  `--idle-hz` times a second (5) and `fps` drops to match (Oct 12).
 
 ## Calibration — `POST /calibrate`
 The page draws ArUco markers (DICT_4X4_50) on screen and posts their layout:

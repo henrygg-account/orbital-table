@@ -1,7 +1,11 @@
 """Run the trained detector live on a camera (iPhone by default) and feed the orbit3d pages.
 
   python live.py [--weights runs/yolo11s-960/weights/best.pt] [--camera arducam --size 2048x1536] [--index N]
-                 [--conf 0.4] [--port 8780] [--no-window]
+                 [--conf 0.4] [--port 8780] [--no-window] [--idle-hz 5]
+
+Once calibrated the model only sees the screen (screen_crop). While nothing on the table moves it runs --idle-hz
+times a second, back to full speed as soon as a piece moves or a hand comes in (keeps laptops cool, Oct 12).
+Fastest on each laptop: export.py writes best.mlpackage (Mac, Neural Engine) and best.onnx (Windows, DirectML).
 
 Recording training video while the page runs: GET /record?min=10 starts, /record/stop stops (files in videos/);
 record-guide.html walks through a shot list and POSTs /record/log (step times, saved as videos/<rec>.steps.json).
@@ -10,7 +14,7 @@ Keys: q quits, s saves the current frame to data/raw (to add to training later).
 Contract with the pages (pieces.json, /events, /calibrate, /marker/<id>.png): ../orbit3d/FEED.md.
 Everything outside main() is importable without a camera (see test_live.py).
 """
-import argparse, json, os, re, sys, threading, time, webbrowser
+import argparse, json, math, os, re, sys, threading, time, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -70,12 +74,14 @@ def box_size_mm(box, frame_wh, H):
 
 
 PERSON_CONF = 0.4        # person outlines used for fingertips
+ENTRY_MM = 50            # the arm's way in: its outline within this band outside the screen (inside the crop, CROP_MM)
 
 
 def fingertips(polys, H, screen_mm):
     """Person outlines (camera px polygons) -> fingertip points on the screen (mm): for every outline that reaches onto
-    the screen, the point on the screen farthest from where the arm comes in (the part of the outline off the screen, or
-    failing that the outline's centre). Hands touch the glass, so no parallax correction."""
+    the screen, the point on the screen farthest from where the arm comes in (the outline just outside the screen edge,
+    else all of it off the screen, else the outline's centre). Hands touch the glass, so no parallax correction.
+    Only the band next to the screen sets the anchor, so the screen crop (CROP_MM) gives the same tips as a full frame."""
     W, Hh = screen_mm
     out = []
     for poly in polys:
@@ -85,7 +91,9 @@ def fingertips(polys, H, screen_mm):
         inside = (mm[:, 0] >= 0) & (mm[:, 0] <= W) & (mm[:, 1] >= 0) & (mm[:, 1] <= Hh)
         if not inside.any():
             continue
-        anchor = mm[~inside].mean(0) if (~inside).any() else mm.mean(0)
+        b = ENTRY_MM
+        entry = ~inside & (mm[:, 0] >= -b) & (mm[:, 0] <= W + b) & (mm[:, 1] >= -b) & (mm[:, 1] <= Hh + b)
+        anchor = mm[entry].mean(0) if entry.any() else mm[~inside].mean(0) if (~inside).any() else mm.mean(0)
         pts = mm[inside]
         tip = pts[np.argmax(np.hypot(pts[:, 0] - anchor[0], pts[:, 1] - anchor[1]))]
         out.append({'x_mm': round(float(tip[0]), 1), 'y_mm': round(float(tip[1]), 1)})
@@ -344,7 +352,8 @@ def snapshot():
     now = time.time()
     with lock:
         cfg, trk = state['cfg'], state['tracker']
-        return {'t': now, 'fps': round(state['fps'], 1), 'model_ms': round(state.get('model_ms', 0)), 'calibrated': state['H'] is not None,
+        return {'t': now, 'fps': round(state['fps'], 1), 'model_ms': round(state.get('model_ms', 0)), 'backend': state.get('backend'),
+                'idle': state.get('idle', False), 'calibrated': state['H'] is not None,
                 'screen_mm': cfg['screen_mm'], 'pieces': trk.feed(now), 'hands': state.get('hands', []),
                 'rec': state['rec'].status() if state.get('rec') else None,
                 **{k: state.get('tune', {}).get(k, v) for k, v in PAGE_KNOBS.items()}}
@@ -504,6 +513,30 @@ def on_screen(x_mm, y_mm, cfg, margin=25):
     return -margin <= x_mm <= W_ + margin and -margin <= y_mm <= H_ + margin
 
 
+CROP_MM = 60             # the model sees the screen plus this margin (pieces on the bezel, arms reaching in), not the room
+
+
+def screen_crop(H, frame_wh, screen_mm, margin=CROP_MM):
+    """Camera-px box (x0, y0, x1, y1) around the screen plus margin, from the calibration; the whole frame uncalibrated.
+    The model then spends its time on the table rather than the floor around it (about 2.4x less work, Oct 12)."""
+    fw, fh = frame_wh
+    if H is None:
+        return 0, 0, fw, fh
+    W_, H_, m = *screen_mm, margin
+    q = cv2.perspectiveTransform(np.float32([[[-m, -m], [W_ + m, -m], [W_ + m, H_ + m], [-m, H_ + m]]]),
+                                 np.linalg.inv(np.asarray(H, np.float64)))[0]
+    x0, y0 = max(0, int(q[:, 0].min())), max(0, int(q[:, 1].min()))
+    x1, y1 = min(fw, int(np.ceil(q[:, 0].max()))), min(fh, int(np.ceil(q[:, 1].max())))
+    return (x0, y0, x1, y1) if x1 - x0 > 64 and y1 - y0 > 64 else (0, 0, fw, fh)
+
+
+def crop_imgsz(crop, frame_wh, imgsz):
+    """Model input size for a crop at the pixels per mm the model was trained at (the whole frame at imgsz), rounded up
+    to the stride."""
+    x0, y0, x1, y1 = crop
+    return math.ceil(imgsz * max(x1 - x0, y1 - y0) / max(frame_wh) / 32) * 32
+
+
 def find_camera(name='iphone'):
     """OpenCV index of the camera whose name contains `name`. OpenCV's AVFoundation backend numbers cameras
     in uniqueID order, so list them the same way and match by name. Windows: DirectShow order, via pygrabber."""
@@ -576,7 +609,7 @@ def use_directml():
     (any DX12 GPU; ~2.5x the CPU on a Radeon iGPU). Needs onnxruntime-directml in place of onnxruntime."""
     import onnxruntime as ort
     if 'DmlExecutionProvider' not in ort.get_available_providers():
-        return
+        return False
     base = ort.InferenceSession
 
     def session(path, opts=None, providers=None, **kw):
@@ -585,6 +618,10 @@ def use_directml():
         opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         return base(path, opts, providers=['DmlExecutionProvider', 'CPUExecutionProvider'], **kw)
     ort.InferenceSession = session
+    return True
+
+
+IDLE_AFTER_S = 1.5       # nothing moved and no hand seen for this long -> the model runs at --idle-hz
 
 
 def main():
@@ -605,6 +642,7 @@ def main():
     ap.add_argument('--port', type=int, default=8780)
     ap.add_argument('--no-browser', action='store_true')
     ap.add_argument('--no-window', action='store_true', help='no OpenCV preview (headless)')
+    ap.add_argument('--idle-hz', type=float, default=5, help='model runs per second while nothing moves (0: always full speed)')
     a = ap.parse_args()
     if sys.platform == 'win32':            # it would "fix" onnxruntime-directml by installing the CPU onnxruntime over it
         os.environ.setdefault('YOLO_AUTOINSTALL', 'false')
@@ -636,8 +674,7 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, cw); cap.set(cv2.CAP_PROP_FRAME_HEIGHT, ch)
     if not cap.isOpened():
         raise SystemExit(f'could not open {dev}')
-    if win and a.weights.endswith('.onnx'):
-        use_directml()
+    dml = win and a.weights.endswith('.onnx') and use_directml()
     model = YOLO(a.weights, task='segment' if '-seg' in str(a.weights) else 'detect')   # round 4 is an outline (segment) model
     if a.weights.endswith(('.mlpackage', '.onnx')):
         dev_kw = {}
@@ -646,15 +683,25 @@ def main():
         dev_kw = {'device': 0 if torch.cuda.is_available() else 'cpu'}
     else:
         dev_kw = {'device': 'mps'}
+    backend = ('Core ML' if a.weights.endswith('.mlpackage') else f"ONNX on {'DirectML' if dml else 'the CPU'}"
+               if a.weights.endswith('.onnx') else f"PyTorch on {dev_kw['device']}")
+    state['backend'] = backend
     grab = state['grab'] = LatestFrame(cap)
     seq = 0
-    print(f'{dev} -> {a.weights}   (q quit, s save frame)   calibrated: {state["H"] is not None}   '
+    print(f'{dev} -> {a.weights} ({backend})   (q quit, s save frame)   calibrated: {state["H"] is not None}   '
           f'orbit demo: http://localhost:{a.port}')
+    if win and backend.lower().endswith('cpu'):
+        print('WARNING: the model is running on the CPU (slow, and it heats the laptop). Use the best.onnx next to best.pt '
+              '(export.py) with onnxruntime-directml installed.')
     if not a.no_browser:
         webbrowser.open(f'http://localhost:{a.port}')
 
-    fps, last, ms, shown, snapped = 0.0, time.time(), 0.0, 0.0, 0.0
+    fps, last, ms, shown, snapped, t0, busy_t = 0.0, time.time(), 0.0, 0.0, 0.0, 0.0, time.time()
+    crop_for, crop, sz = None, None, a.imgsz
     while True:
+        state['idle'] = a.idle_hz > 0 and time.time() - busy_t > IDLE_AFTER_S
+        if state['idle']:                  # all still: look a few times a second, not every frame
+            time.sleep(max(0.0, t0 + 1 / a.idle_hz - time.time()))
         seq, frame = grab.next(seq)
         if frame is None:
             continue
@@ -662,17 +709,22 @@ def main():
         if req is not None and req.feed_frame(detector, frame, cfg):
             with lock:
                 state['pending'] = None
-        t0 = time.time()
-        r = model.predict(frame, imgsz=a.imgsz, conf=state['tune']['conf'], agnostic_nms=True, verbose=False, **dev_kw)[0]   # one class per object
-        ms = 0.9 * ms + 0.1 * (time.time() - t0) * 1000
-        state['model_ms'] = ms
         fh, fw = frame.shape[:2]
         state['frame_wh'] = (fw, fh)
         Hm = state['H']
+        if crop_for is None or crop_for[0] is not Hm or crop_for[1] != (fw, fh):   # calibrated, recalibrated or resized
+            crop_for, crop = (Hm, (fw, fh)), screen_crop(Hm, (fw, fh), cfg['screen_mm'])
+            sz = crop_imgsz(crop, (fw, fh), a.imgsz)                 # exported models keep their own fixed size (export.py)
+        cx0, cy0, cx1, cy1 = crop
+        t0 = time.time()
+        r = model.predict(np.ascontiguousarray(frame[cy0:cy1, cx0:cx1]), imgsz=sz, conf=state['tune']['conf'],
+                          agnostic_nms=True, verbose=False, **dev_kw)[0]   # one class per object
+        ms = 0.9 * ms + 0.1 * (time.time() - t0) * 1000
+        state['model_ms'] = ms
         per_role, raw = {}, []
-        boxes = r.boxes.xyxy.tolist()
+        boxes = [[x1 + cx0, y1 + cy0, x2 + cx0, y2 + cy0] for x1, y1, x2, y2 in r.boxes.xyxy.tolist()]   # crop -> frame px
         scores = colour_scores(frame, boxes)                       # second opinion on identity (colorcheck.py)
-        polys = r.masks.xy if getattr(r, 'masks', None) is not None else [None] * len(boxes)
+        polys = [p + np.float32([cx0, cy0]) for p in r.masks.xy] if getattr(r, 'masks', None) is not None else [None] * len(boxes)
         people = []
         for k, ((x1, y1, x2, y2), c, s) in enumerate(zip(boxes, r.boxes.cls.int().tolist(), r.boxes.conf.tolist())):
             role = cfg['map'].get(r.names[c], r.names[c])
@@ -697,6 +749,8 @@ def main():
         with lock:
             trk.step([d for dets in per_role.values() for d in dets], now)
             kept = [(d['role'], d['role'], d) for dets in per_role.values() for d in dets]   # preview: every on-screen detection
+            if state['hands'] or state['pending'] is not None or any(p['moving'] for p in trk.feed(now).values()):
+                busy_t = now                                        # a hand over the screen, a moving piece or a calibration: full speed
         fps = 0.9 * fps + 0.1 / max(1e-3, now - last); last = now
         state['fps'] = fps
         if now - snapped > .5:             # /snapshot.jpg: what the camera sees + every raw detection
@@ -707,6 +761,7 @@ def main():
                 W_, H_ = cfg['screen_mm']
                 quad = cv2.perspectiveTransform(np.float32([[[0, 0], [W_, 0], [W_, H_], [0, H_]]]), Hinv)[0]
                 cv2.polylines(snap, [quad.astype(np.int32)], True, (0, 255, 0), 3)
+                cv2.rectangle(snap, (cx0, cy0), (cx1 - 1, cy1 - 1), (120, 120, 120), 2)   # what the model sees
             for (x1, y1, x2, y2), txt, col in raw:
                 cv2.rectangle(snap, (x1, y1), (x2, y2), col, 4)
                 cv2.putText(snap, txt, (x1, max(30, y1 - 12)), cv2.FONT_HERSHEY_SIMPLEX, 1.2, col, 3)
