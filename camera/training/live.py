@@ -3,7 +3,8 @@
   python live.py [--weights runs/yolo11s-960/weights/best.pt] [--camera arducam --size 2048x1536] [--index N]
                  [--conf 0.4] [--port 8780] [--no-window]
 
-Recording training video while the page runs: GET /record?min=10 starts, /record/stop stops (files in videos/).
+Recording training video while the page runs: GET /record?min=10 starts, /record/stop stops (files in videos/);
+record-guide.html walks through a shot list and POSTs /record/log (step times, saved as videos/<rec>.steps.json).
 
 Keys: q quits, s saves the current frame to data/raw (to add to training later).
 Contract with the pages (pieces.json, /events, /calibrate, /marker/<id>.png): ../orbit3d/FEED.md.
@@ -15,6 +16,9 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+
+from colorcheck import ROLES as COLOUR_ROLES, colour_scores
+from tracker import Tracker as PieceTracker   # the live tracker (rules: tracker.py); Tracker below is the earlier one (replay.py compares)
 
 HERE = Path(__file__).parent
 WEB = HERE.parent / 'orbit3d'
@@ -54,6 +58,38 @@ def parallax_correct(p, nadir, cam_h, h):
     """A model top h mm above the glass seen at screen point p is really at N + (p-N)*(H-h)/H."""
     k = (cam_h - h) / cam_h
     return nadir[0] + (p[0] - nadir[0]) * k, nadir[1] + (p[1] - nadir[1]) * k
+
+
+def box_size_mm(box, frame_wh, H):
+    """Diagonal of a camera-pixel box on the screen plane (mm); None when uncalibrated."""
+    if H is None:
+        return None
+    x1, y1, x2, y2 = box
+    a, b = apply_h(H, x1, y1), apply_h(H, x2, y2)
+    return float(np.hypot(b[0] - a[0], b[1] - a[1]))
+
+
+PERSON_CONF = 0.4        # person outlines used for fingertips
+
+
+def fingertips(polys, H, screen_mm):
+    """Person outlines (camera px polygons) -> fingertip points on the screen (mm): for every outline that reaches onto
+    the screen, the point on the screen farthest from where the arm comes in (the part of the outline off the screen, or
+    failing that the outline's centre). Hands touch the glass, so no parallax correction."""
+    W, Hh = screen_mm
+    out = []
+    for poly in polys:
+        if poly is None or len(poly) < 3:
+            continue
+        mm = cv2.perspectiveTransform(np.float32(poly).reshape(-1, 1, 2), np.asarray(H, np.float64)).reshape(-1, 2)
+        inside = (mm[:, 0] >= 0) & (mm[:, 0] <= W) & (mm[:, 1] >= 0) & (mm[:, 1] <= Hh)
+        if not inside.any():
+            continue
+        anchor = mm[~inside].mean(0) if (~inside).any() else mm.mean(0)
+        pts = mm[inside]
+        tip = pts[np.argmax(np.hypot(pts[:, 0] - anchor[0], pts[:, 1] - anchor[1]))]
+        out.append({'x_mm': round(float(tip[0]), 1), 'y_mm': round(float(tip[1]), 1)})
+    return out
 
 
 def to_screen(u, v, frame_wh, cfg, role, H=None):
@@ -170,12 +206,16 @@ class Tracker:
 # ---------------------------------------------------------------- live tuning (tune.html)
 # Jitter vs. responsiveness knobs, changed while running via GET/POST /tuning and kept in tuning.json:
 # the Tracker constants above, the detector's confidence threshold, and the pages' easing time (sent in /events).
-TRACKER_KNOBS = ('SMOOTH', 'BAND_MOVING_MM', 'BAND_STILL_MM', 'STILL_S', 'REST_MM', 'NEAR_MM', 'JUMP_FRAMES', 'STALE_S')
-PAGE_TAU_S = 0.24        # demo.html eases each piece toward the feed with this time constant
+TRACKER_KNOBS = ('SMOOTH', 'BAND_MOVING_MM', 'BAND_STILL_MM', 'STILL_S', 'REST_MM',      # tracker.py
+                 'GATE_MM', 'VMAX_MM_S', 'ROLE_PENALTY_MM', 'CONF_NEW', 'CONFIRM_FRAMES', 'RELOCATE_S', 'EDGE_MM', 'LEAVE_S', 'HOLD_S')
+PAGE_TAU_S = 0.24        # demo.html eases each still piece toward the feed with this time constant...
+PAGE_TAU_MOVE_S = 0.6    # ...and a moving one with this (tune.html, Oct 9)
+PAGE_LEAD_S = 0.6        # a moving piece is drawn this far ahead along its velocity (tune.html, Oct 9; cancels the moving easing's lag)
+PAGE_KNOBS = {'page_tau_s': PAGE_TAU_S, 'page_tau_move_s': PAGE_TAU_MOVE_S, 'page_lead_s': PAGE_LEAD_S}
 
 
 def default_tuning(conf):
-    return {**{k: getattr(Tracker, k) for k in TRACKER_KNOBS}, 'conf': conf, 'page_tau_s': PAGE_TAU_S}
+    return {**{k: getattr(PieceTracker, k) for k in TRACKER_KNOBS}, 'conf': conf, **PAGE_KNOBS}
 
 
 def set_tuning(changes, save=True):
@@ -305,9 +345,9 @@ def snapshot():
     with lock:
         cfg, trk = state['cfg'], state['tracker']
         return {'t': now, 'fps': round(state['fps'], 1), 'model_ms': round(state.get('model_ms', 0)), 'calibrated': state['H'] is not None,
-                'screen_mm': cfg['screen_mm'], 'pieces': trk.feed(now),
+                'screen_mm': cfg['screen_mm'], 'pieces': trk.feed(now), 'hands': state.get('hands', []),
                 'rec': state['rec'].status() if state.get('rec') else None,
-                'page_tau_s': state.get('tune', {}).get('page_tau_s', PAGE_TAU_S)}
+                **{k: state.get('tune', {}).get(k, v) for k, v in PAGE_KNOBS.items()}}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -373,6 +413,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
+            if self.path.split('?')[0] == '/record/log':         # record-guide.html: the shot list with each step's times
+                try:
+                    body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or b'{}')
+                    rec = state.get('rec')
+                    name = (rec.path.stem if rec else time.strftime('rec_%Y%m%d-%H%M%S')) + '.steps.json'
+                    (HERE / 'videos' / name).write_text(json.dumps(body, indent=1))
+                    res = {'ok': True, 'file': name}
+                except Exception as e:
+                    res = {'ok': False, 'error': str(e)}
+                return self._send(json.dumps(res).encode(), 'application/json')
             if self.path.split('?')[0] == '/tuning':             # tune.html: {knob: value, ...}
                 try:
                     res = {'ok': True, 'values': set_tuning(json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or b'{}'))}
@@ -539,9 +589,10 @@ def use_directml():
 
 def main():
     ap = argparse.ArgumentParser()
-    run = HERE / 'runs/tv-pol-yolo11s-960/weights'          # round 3: polarized Arducam
-    if not run.exists():
-        run = HERE / 'runs/tv-sam-yolo11s-960/weights'      # printed pieces, SAM 2 labels (GCP, Oct 5)
+    run = HERE / 'runs/r4-seg-yolo11s-960/weights'          # round 4: + Moon + person, outlines (Oct 9)
+    for older in ('tv-pol-yolo11s-960', 'tv-sam-yolo11s-960'):   # round 3 (polarized), round 2 (SAM 2 labels)
+        if not run.exists():
+            run = HERE / 'runs' / older / 'weights'
     ml = run / 'best.mlpackage'                               # Core ML export, if present
     onnx = run / 'best.onnx'                                  # Windows: ONNX export, run on DirectML
     dflt = ml if ml.exists() else onnx if sys.platform == 'win32' and onnx.exists() else run / 'best.pt'
@@ -559,7 +610,8 @@ def main():
         os.environ.setdefault('YOLO_AUTOINSTALL', 'false')
     from ultralytics import YOLO
     cfg = load_config()
-    state['cfg'] = cfg; state['H'] = load_calib(); state['tracker'] = Tracker(cfg)
+    state['cfg'] = cfg; state['H'] = load_calib(); state['tracker'] = PieceTracker(cfg)
+    state['tracker'].LOG = str(HERE / 'tracker_events.log')
     trk, detector = state['tracker'], make_detector()
     state['tune_default'] = default_tuning(a.conf); state['tune'] = dict(state['tune_default'])
     try:
@@ -573,6 +625,11 @@ def main():
     dev = f'camera {idx} ({name})'
     cw, ch = map(int, a.size.lower().split('x'))
     win = sys.platform == 'win32'
+    if not win:                            # the Arducam can hang at 2048x1536 after a process that had it exits: opening it
+        wake = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)   # once at its default size first clears that (Oct 9)
+        for _ in range(5):
+            wake.read()
+        wake.release()
     cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW if win else cv2.CAP_AVFOUNDATION)
     if win:                                # UVC: MJPG, or DirectShow falls back to raw YUY2 at a low frame rate
         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
@@ -581,7 +638,7 @@ def main():
         raise SystemExit(f'could not open {dev}')
     if win and a.weights.endswith('.onnx'):
         use_directml()
-    model = YOLO(a.weights, task='detect')
+    model = YOLO(a.weights, task='segment' if '-seg' in str(a.weights) else 'detect')   # round 4 is an outline (segment) model
     if a.weights.endswith(('.mlpackage', '.onnx')):
         dev_kw = {}
     elif win:
@@ -613,8 +670,15 @@ def main():
         state['frame_wh'] = (fw, fh)
         Hm = state['H']
         per_role, raw = {}, []
-        for (x1, y1, x2, y2), c, s in zip(r.boxes.xyxy.tolist(), r.boxes.cls.int().tolist(), r.boxes.conf.tolist()):
+        boxes = r.boxes.xyxy.tolist()
+        scores = colour_scores(frame, boxes)                       # second opinion on identity (colorcheck.py)
+        polys = r.masks.xy if getattr(r, 'masks', None) is not None else [None] * len(boxes)
+        people = []
+        for k, ((x1, y1, x2, y2), c, s) in enumerate(zip(boxes, r.boxes.cls.int().tolist(), r.boxes.conf.tolist())):
             role = cfg['map'].get(r.names[c], r.names[c])
+            if role == 'person' and s >= PERSON_CONF:            # round 4: outlines of hands / arms -> fingertips (zoom slider)
+                people.append(polys[k])
+                raw.append(((int(x1), int(y1), int(x2), int(y2)), f'person {s:.2f}', (60, 220, 90)))
             if role not in cfg['roles']:
                 continue
             u, v = (x1 + x2) / 2 / fw, (y1 + y2) / 2 / fh
@@ -623,14 +687,16 @@ def main():
                 raw.append(((int(x1), int(y1), int(x2), int(y2)), f'{role} {s:.2f} off-screen', (90, 90, 90)))
                 continue
             raw.append(((int(x1), int(y1), int(x2), int(y2)), f'{role} {s:.2f}', COLORS.get(role, (255, 255, 255))))
-            per_role.setdefault(role, []).append({'x_mm': x_mm, 'y_mm': y_mm, 'u': u, 'v': v, 'conf': s,
-                                                  'box': (int(x1), int(y1), int(x2), int(y2))})
+            per_role.setdefault(role, []).append({'role': role, 'x_mm': x_mm, 'y_mm': y_mm, 'u': u, 'v': v, 'conf': s,
+                                                  'box': (int(x1), int(y1), int(x2), int(y2)),
+                                                  'colour': dict(zip(COLOUR_ROLES, scores[k])),
+                                                  'size_mm': box_size_mm((x1, y1, x2, y2), (fw, fh), Hm)})
         now = time.time()
+        state['hands'] = fingertips(people, Hm, cfg['screen_mm']) if Hm is not None and people else []
         kept = []
         with lock:
-            for role, dets in per_role.items():
-                kept += [(i, role, d) for i, d in trk.update(role, dets, now)]
-            trk.expire(now)
+            trk.step([d for dets in per_role.values() for d in dets], now)
+            kept = [(d['role'], d['role'], d) for dets in per_role.values() for d in dets]   # preview: every on-screen detection
         fps = 0.9 * fps + 0.1 / max(1e-3, now - last); last = now
         state['fps'] = fps
         if now - snapped > .5:             # /snapshot.jpg: what the camera sees + every raw detection

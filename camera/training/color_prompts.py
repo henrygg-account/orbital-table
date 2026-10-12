@@ -6,7 +6,8 @@ Tuned for the polarized Arducam view (camera and TV fixed): the pieces are dim b
 ~15-31, Seldon-2 pink/red hue >= 165 or <= 6, Earth blue hue ~85-118). A median of frames across the video gives the
 empty table; the screen is its largest near-black region; a piece is a blob of its colour inside the screen that is
 brighter than the empty table.
-Writes <seq>/prompts.json: {"<frame index>": {"<class index>": [x1, y1, x2, y2]}} in frame px. Moon skipped.
+The Moon (round 4) is the one white thing: low saturation, very bright, compact and round.
+Writes <seq>/prompts.json: {"<frame index>": {"<class index>": [x1, y1, x2, y2]}} in frame px.
 """
 import argparse, json
 from pathlib import Path
@@ -15,7 +16,7 @@ import cv2
 import numpy as np
 
 CLASSES = ['earth', 'moon', 'seldon-1', 'seldon-2']
-COL = {0: (255, 170, 60), 2: (40, 210, 255), 3: (200, 60, 255)}
+COL = {0: (255, 170, 60), 1: (230, 230, 230), 2: (40, 210, 255), 3: (200, 60, 255)}
 SW = 640                                                     # work width (px)
 
 
@@ -38,6 +39,18 @@ def screen_mask(bg_hsv):
     return cv2.erode(m, np.ones((5, 5), np.uint8))
 
 
+MARGIN_MM = 40                                               # pieces on the bezel still count
+
+
+def calib_mask(path, shape, cam_wh=(2048, 1536)):
+    """The screen plus MARGIN_MM, from calib.json's homography (camera px -> screen mm), at work size."""
+    c = json.loads(Path(path).read_text()); Hm = np.array(c['H'], float); W, H = c['screen_mm']; m = MARGIN_MM
+    quad = cv2.perspectiveTransform(np.float32([[[-m, -m], [W + m, -m], [W + m, H + m], [-m, H + m]]]), np.linalg.inv(Hm))[0]
+    quad *= [shape[1] / cam_wh[0], shape[0] / cam_wh[1]]
+    out = np.zeros(shape[:2], np.uint8); cv2.fillConvexPoly(out, quad.astype(np.int32), 255)
+    return out
+
+
 def blob(mask, close, amin, amax, max_aspect=3.0):
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((close, close), np.uint8))
     n, lab, st, _ = cv2.connectedComponentsWithStats(mask)
@@ -53,18 +66,17 @@ def frame_boxes(img, scr, bg_v):
     H, W = img.shape[:2]
     hsv = cv2.cvtColor(cv2.resize(img, (SW, round(SW * H / W)), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
-    glow = float((v.astype(np.int16) - bg_v)[scr > 0].mean()) > 4     # the page shows through the film (blue frames)
     on = (scr > 0) & (v.astype(np.int16) - bg_v > 10)          # inside the screen and brighter than the empty table
     masks = {
         2: (h >= 15) & (h <= 31) & (s > 100) & (v > 45),
         3: ((h >= 165) | (h <= 6)) & (s > 110) & (v > 35),
-        0: (h >= 85) & (h <= 118) & (s > 70) & (v > 28),
+        0: (h >= 85) & (h <= 118) & (s > 120) & (v > 60),        # Earth: deep blue, far more saturated than the sky showing through
+        1: (s < 80) & (v > 110),                                # the Moon: white and bright (its rim is greyer than its centre)
     }
     out, f = {}, W / SW
     for c, m in masks.items():
-        if c == 0 and glow:
-            continue                                            # Earth's blue is lost in a glowing blue page
-        b = blob(((m & on).astype(np.uint8)) * 255, 5, 20, 1500)
+        mk = ((m & on).astype(np.uint8)) * 255
+        b = blob(mk, 3, 8, 700, 1.6) if c == 1 else blob(mk, 3, 20, 400, 1.6) if c == 0 else blob(mk, 5, 20, 1500)   # Moon, Earth: round, piece-sized (the sky glowing through the film makes bigger blue patches)
         if b:
             x, y, w, hh = b
             out[c] = [x * f, y * f, (x + w) * f, (y + hh) * f]
@@ -75,23 +87,26 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('seq', type=Path)
     ap.add_argument('--sheet', type=Path, help='write a contact sheet of 16 frames with the kept boxes')
+    ap.add_argument('--calib', type=Path, help="calib.json: the screen (+ MARGIN_MM) from the calibration instead of from the image")
     a = ap.parse_args()
     frames = sorted(a.seq.glob('[0-9]*.jpg'))
     bg = background(frames)
     bg_hsv = cv2.cvtColor(bg, cv2.COLOR_BGR2HSV)
-    scr, bg_v = screen_mask(bg_hsv), bg_hsv[:, :, 2].astype(np.int16)
+    scr, bg_v = (calib_mask(a.calib, bg.shape) if a.calib else screen_mask(bg_hsv)), bg_hsv[:, :, 2].astype(np.int16)
     print('screen covers', round(100 * (scr > 0).mean()), '% of the frame')
     raw = {}
     for i, f in enumerate(frames):
         boxes = frame_boxes(cv2.imread(str(f)), scr, bg_v)
         if boxes:
             raw[i] = {c: [round(v, 1) for v in b] for c, b in boxes.items()}
-    print('colour boxes found:', {CLASSES[c]: sum(c in b for b in raw.values()) for c in (0, 2, 3)})
+    print('colour boxes found:', {CLASSES[c]: sum(c in b for b in raw.values()) for c in (0, 1, 2, 3)})
     # keep only trustworthy boxes (they become SAM prompts): size near the class's median, and the same box (within
     # 12 px) in the previous and the next frame
     near = lambda b, o: o is not None and max(abs(b[k] - o[k]) for k in range(4)) < 12
     kept = {}
-    for c in (0, 2, 3):
+    for c in (0, 1, 2, 3):
+        if not any(c in b for b in raw.values()):
+            continue
         sizes = np.array([[b[c][2] - b[c][0], b[c][3] - b[c][1]] for b in raw.values() if c in b])
         mw, mh = np.median(sizes, axis=0)
         for i in range(1, len(frames) - 1):
@@ -100,7 +115,7 @@ def main():
                 continue
             if near(b, raw.get(i - 1, {}).get(c)) and near(b, raw.get(i + 1, {}).get(c)):
                 kept.setdefault(i, {})[c] = b
-    print('kept as prompts:', {CLASSES[c]: sum(c in b for b in kept.values()) for c in (0, 2, 3)})
+    print('kept as prompts:', {CLASSES[c]: sum(c in b for b in kept.values()) for c in (0, 1, 2, 3)})
     (a.seq / 'prompts.json').write_text(json.dumps({str(i): {str(c): b for c, b in d.items()} for i, d in kept.items()}))
     if a.sheet:
         tiles = []

@@ -10,6 +10,10 @@
    "count": 1,
    "height_mm": 32
   },
+  "moon": {
+   "count": 1,
+   "height_mm": 30
+  },
   "seldon-1": {
    "count": 1,
    "height_mm": 38

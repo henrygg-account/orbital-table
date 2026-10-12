@@ -67,15 +67,23 @@ const GROUPS = [
   ]],
   ['Smoothing', [
     ['SMOOTH', 'Detection smoothing', 0.05, 1, 0.01, '', 'Weight of each new detection (EMA). Lower = steadier but laggier; 1 = raw detections.'],
-    ['page_tau_s', 'Screen easing', 0, 0.5, 0.01, 's', 'Time constant the table page eases toward the feed. 0 = jump straight to each update.'],
+    ['page_tau_s', 'Screen easing (still)', 0, 1.5, 0.01, 's', 'Time constant the table page eases a still piece toward the feed. Higher = calmer.'],
+    ['page_tau_move_s', 'Screen easing (moving)', 0, 1.5, 0.01, 's', 'Easing for a moving piece (blends in from 0 to 150 mm/s). Lower = follows the hand more closely, steppier.'],
+    ['page_lead_s', 'Lead', 0, 1.5, 0.01, 's', 'A moving piece is drawn this far ahead along its velocity, to make up for the camera delay. Too high = overshoots when you stop.'],
   ]],
   ['Detector', [
     ['conf', 'Confidence threshold', 0.05, 0.9, 0.01, '', 'Detections below this are dropped. Lower = fewer dropouts, more false hits (the tracker filters one-off strays).'],
   ]],
-  ['Tracking', [
-    ['NEAR_MM', 'Same-piece radius', 10, 150, 1, 'mm', 'A detection this close to the last position is treated as the same piece. Fast hand moves need a bigger radius.'],
-    ['JUMP_FRAMES', 'Jump confirm', 1, 60, 1, 'frames', 'A detection far from the piece must repeat this many frames before the piece jumps there. Lower = faster to follow a picked-up piece, more false jumps.'],
-    ['STALE_S', 'Re-acquire after', 0.2, 10, 0.1, 's', 'If a piece is unseen this long, the next detection anywhere is accepted straight away.'],
+  ['Tracking rules (tracker.py)', [
+    ['GATE_MM', 'Same-piece radius', 10, 150, 1, 'mm', 'A detection this close to where the piece should be is that piece. Grows with hand speed while the piece is unseen.'],
+    ['VMAX_MM_S', 'Hand speed', 300, 4000, 50, 'mm/s', 'How fast a hand can move a piece. Sets how far the search widens per second unseen.'],
+    ['ROLE_PENALTY_MM', 'Label distrust', 0, 150, 1, 'mm', 'Cost of matching a detection labelled as another piece. Higher = trust the model labels more; position still wins up close.'],
+    ['CONF_NEW', 'Confidence to place', 0.05, 0.9, 0.01, '', 'A piece is only put on the table by a detection this confident (or a weaker one with clearly its own colour).'],
+    ['CONFIRM_FRAMES', 'Confirm frames', 1, 30, 1, 'frames', 'A new piece, or a piece that reappears somewhere else, must be seen this many frames in one spot first.'],
+    ['RELOCATE_S', 'Move after unseen', 0, 2, 0.05, 's', 'A piece only jumps to a confirmed spot elsewhere after being unseen this long at its old spot.'],
+    ['EDGE_MM', 'Edge band', 0, 200, 5, 'mm', 'Pieces can only leave the table when last seen this close to the screen edge. Elsewhere a missing piece is covered, not gone.'],
+    ['LEAVE_S', 'Leave after', 0.2, 10, 0.1, 's', 'A piece last seen in the edge band is removed after being unseen this long.'],
+    ['HOLD_S', 'Hold covered piece', 5, 300, 5, 's', 'A piece missing anywhere else is held in place this long before it is removed.'],
   ]],
 ];
 const $ = id => document.getElementById(id);

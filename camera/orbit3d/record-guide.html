@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recording Guide</title>
+<link rel="stylesheet" href="gg-table.css">
+<style>
+  :root { --mint: #0ee3a6; --red: #e2604f; --line: rgba(246,248,248,.12); --dim: #8a969a; }
+  html, body { margin: 0; background: #0a0d0d; color: #dde3e4; font-family: var(--font-display); font-weight: 400; }
+  body { padding: 28px 36px; max-width: 1200px; margin: 0 auto; }
+  .eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); display: flex; gap: 12px; align-items: center; }
+  .rec { color: var(--red); display: none; } .rec.on { display: inline; }
+  .stage { margin: 26px 0 18px; border: 1px solid var(--line); border-radius: 16px; background: #0d1113; padding: 28px 34px 30px; }
+  .num { font-family: var(--font-mono); font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+  .title { font-size: 46px; color: #f6f8f8; margin: 8px 0 10px; letter-spacing: -.01em; }
+  .say { font-size: 27px; line-height: 1.35; color: #dde3e4; min-height: 74px; }
+  .count { font-size: 120px; color: var(--mint); font-variant-numeric: tabular-nums; line-height: 1; margin-top: 18px; }
+  .bar { height: 6px; background: rgba(246,248,248,.08); border-radius: 3px; margin-top: 16px; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--mint); }
+  .next { margin-top: 14px; color: var(--dim); font-size: 18px; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  button { font-family: var(--font-mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; border-radius: 999px; padding: 12px 22px;
+    border: 1px solid var(--line); background: rgba(246,248,248,.04); color: #dde3e4; cursor: pointer; }
+  button.go { background: var(--mint); color: #0a0d0d; border-color: var(--mint); padding: 15px 36px; }
+  button.stop { border-color: var(--red); color: var(--red); }
+  label { color: var(--dim); font-size: 14px; display: flex; gap: 6px; align-items: center; }
+  ol { columns: 2; column-gap: 40px; padding-left: 22px; margin-top: 26px; color: var(--dim); font-size: 15px; line-height: 1.7; }
+  li.cur { color: #f6f8f8; } li.done { color: #4d585b; text-decoration: line-through; }
+  .msg { color: var(--dim); font-size: 14px; }
+  @media (max-width: 800px) { .title { font-size: 32px; } .say { font-size: 20px; } .count { font-size: 80px; } ol { columns: 1; } }
+</style>
+</head>
+<body>
+<div class="eyebrow"><span>General Galactic · training video, round 4</span><span class="rec" id="rec">● REC</span><span id="recinfo"></span></div>
+
+<div class="stage">
+  <div class="num" id="num">Before you start</div>
+  <div class="title" id="title">Get ready</div>
+  <div class="say" id="say">All pieces off the screen. The TV shows the normal orbits view. Camera and TV exactly where they are. Then press Start: recording begins and each step is read out loud.</div>
+  <div class="count" id="count">—</div>
+  <div class="bar"><i id="bar"></i></div>
+  <div class="next" id="next"></div>
+</div>
+
+<div class="row">
+  <button class="go" id="start">Start recording</button>
+  <button id="back">◀ Back</button>
+  <button id="skip">Skip ▶</button>
+  <button id="pause">Pause steps</button>
+  <button class="stop" id="stop">Stop</button>
+  <label><input type="checkbox" id="speak" checked> read steps aloud</label>
+  <span class="msg" id="msg"></span>
+</div>
+
+<ol id="list"></ol>
+
+<script>
+// The shot list. Each step: tags (what is in view, for labelling), seconds, what to do. The recording runs the whole time;
+// Back / Skip / Pause only move the guide (the step log records the real times, saved next to the video at the end).
+const STEPS = [
+  { t: 'Empty table', s: 20, tags: ['empty'], say: 'Hands off the table. Nothing on the screen. Just let it record.' },
+  { t: 'Moon alone', s: 60, tags: ['moon'], say: 'Place only the Moon. Slide it slowly all over the screen: into all four corners and along every edge.' },
+  { t: 'Moon and Earth', s: 30, tags: ['moon', 'earth'], say: 'Add Earth. Move both around, sometimes close together.' },
+  { t: 'All four pieces', s: 45, tags: ['moon', 'earth', 'seldon-1', 'seldon-2'], say: 'Add both Seldons. Normal demo moves: place a piece, slide it, place another.' },
+  { t: 'Close together', s: 45, tags: ['moon', 'earth', 'seldon-1', 'seldon-2'], say: 'Bring pieces close together, almost touching. Pairs and groups of three.' },
+  { t: 'Edges and corners', s: 45, tags: ['moon', 'earth', 'seldon-1', 'seldon-2'], say: 'Move pieces along the screen edges and into the corners.' },
+  { t: 'Fast and slow', s: 45, tags: ['moon', 'earth', 'seldon-1', 'seldon-2'], say: 'Some quick moves across the table, then very slow ones.' },
+  { t: 'Pick up and put down', s: 45, tags: ['hands', 'all'], say: 'Pick each piece up, lift it, and put it down somewhere else. One at a time.' },
+  { t: 'Hover', s: 30, tags: ['hands', 'all'], say: 'Hold your hand over a piece without touching it, a few seconds each. Then the next piece.' },
+  { t: 'Cover', s: 40, tags: ['hands', 'all'], say: 'Cover a piece completely with your palm for five seconds, then lift your hand away. Do it for each piece.' },
+  { t: 'Two hands', s: 35, tags: ['hands', 'all'], say: 'Use both hands: move two pieces at the same time.' },
+  { t: 'Reach across', s: 30, tags: ['hands', 'all'], say: 'Reach across the table over the pieces, from your side and from the sides.' },
+  { t: 'Fingertip slider', s: 60, tags: ['finger'], say: 'One finger on the screen. Slide it slowly left and right near your edge, like a slider. Then anywhere on the screen. Pieces can stay where they are.' },
+  { t: 'Lean in', s: 45, tags: ['person'], say: 'Lean over the table. Let your sleeves and arms hang over the screen. Point at pieces.' },
+  { t: 'Lighting', s: 45, tags: ['lighting', 'all'], say: 'If you can, turn the room lights off and on while moving pieces. If not, just keep moving pieces.' },
+  { t: 'Off the edge', s: 30, tags: ['all'], say: 'Slide each piece off the screen over an edge, one at a time, until the screen is empty.' },
+  { t: 'Empty again', s: 15, tags: ['empty'], say: 'Hands off. Empty screen. Almost done.' },
+];
+const TOTAL = STEPS.reduce((a, s) => a + s.s, 0);
+const $ = id => document.getElementById(id);
+const list = $('list');
+STEPS.forEach((s, i) => { const li = document.createElement('li'); li.textContent = `${s.t} · ${s.s} s`; list.appendChild(li); });
+let k = -1, left = 0, paused = false, running = false, t0 = 0, log = [], timer = null, recFile = null;
+
+function beep(f = 880, d = .18) {
+  try { const a = beep.ctx || (beep.ctx = new AudioContext()), o = a.createOscillator(), g = a.createGain();
+    o.frequency.value = f; g.gain.setValueAtTime(.2, a.currentTime); g.gain.exponentialRampToValueAtTime(.001, a.currentTime + d);
+    o.connect(g).connect(a.destination); o.start(); o.stop(a.currentTime + d); } catch (e) {}
+}
+function speak(text) {
+  if (!$('speak').checked || !window.speechSynthesis) return;
+  speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.rate = 1.0; speechSynthesis.speak(u);
+}
+function show() {
+  [...list.children].forEach((li, i) => li.className = i < k ? 'done' : i === k ? 'cur' : '');
+  if (k < 0 || k >= STEPS.length) return;
+  const s = STEPS[k], n = STEPS[k + 1];
+  $('num').textContent = `Step ${k + 1} of ${STEPS.length}`;
+  $('title').textContent = s.t; $('say').textContent = s.say;
+  $('next').textContent = n ? `Next: ${n.t}` : 'Last step.';
+}
+function go(i) {
+  const now = (performance.now() - t0) / 1000;
+  if (log.length && log[log.length - 1].end == null) log[log.length - 1].end = +now.toFixed(2);
+  k = i;
+  if (k >= STEPS.length) return finish();
+  left = STEPS[k].s;
+  log.push({ step: k + 1, title: STEPS[k].t, tags: STEPS[k].tags, start: +now.toFixed(2), end: null });
+  show(); beep(); speak(`${STEPS[k].t}. ${STEPS[k].say}`);
+}
+function tick() {
+  if (!running) return;
+  if (!paused) {
+    left -= .1;
+    if (left <= 3.05 && left > 2.95 || left <= 2.05 && left > 1.95 || left <= 1.05 && left > .95) beep(660, .08);
+    if (left <= 0) go(k + 1);
+  }
+  if (k >= 0 && k < STEPS.length) {
+    $('count').textContent = Math.max(0, Math.ceil(left));
+    $('bar').style.width = `${100 * (1 - left / STEPS[k].s)}%`;
+  }
+}
+async function finish() {
+  running = false; clearInterval(timer);
+  $('num').textContent = 'Done'; $('title').textContent = 'Recording finished'; $('say').textContent = 'Saving…'; $('count').textContent = '✓'; $('next').textContent = '';
+  [...list.children].forEach(li => li.className = 'done');
+  speak('Done. Thank you.'); beep(1040, .4);
+  try { await fetch('/record/stop'); } catch (e) {}
+  try {
+    const r = await (await fetch('/record/log', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video: recFile, started: new Date(Date.now() - (performance.now() - t0)).toISOString(), steps: log }) })).json();
+    $('say').textContent = r.ok ? `Saved: videos/${recFile} and videos/${r.file}.` : `Video saved; step log failed: ${r.error}`;
+  } catch (e) { $('say').textContent = 'Video saved; could not save the step log.'; }
+}
+$('start').onclick = async () => {
+  if (running) return;
+  $('msg').textContent = 'Starting the recording…';
+  try {
+    const r = await (await fetch(`/record?min=${(TOTAL / 60 + 1).toFixed(1)}`)).json();   // a minute of slack
+    if (!r.ok) { $('msg').textContent = 'Could not start: ' + r.error; return; }
+    recFile = r.file; $('msg').textContent = '';
+  } catch (e) { $('msg').textContent = 'live.py is not answering. Is it running?'; return; }
+  running = true; t0 = performance.now(); log = []; go(0); timer = setInterval(tick, 100);
+};
+$('back').onclick = () => { if (running && k > 0) go(k - 1); };
+$('skip').onclick = () => { if (running) go(k + 1); };
+$('pause').onclick = () => { paused = !paused; $('pause').textContent = paused ? 'Resume steps' : 'Pause steps'; if (paused) speak('Paused.'); };
+$('stop').onclick = () => { if (running) { log.length && (log[log.length - 1].end = +((performance.now() - t0) / 1000).toFixed(2)); k = STEPS.length; finish(); } };
+// recording status from the feed
+try { new EventSource('/events').onmessage = e => { try { const f = JSON.parse(e.data), r = f.rec;
+  $('rec').className = 'rec' + (r && r.recording ? ' on' : '');
+  $('recinfo').textContent = r && r.recording ? `${r.file} · ${r.frames} frames · ${Math.round(f.fps)} fps` : `camera ${Math.round(f.fps)} fps`;
+} catch (x) {} }; } catch (e) {}
+$('next').textContent = `${STEPS.length} steps, about ${Math.round(TOTAL / 60)} minutes.`;
+</script>
+</body>
+</html>
