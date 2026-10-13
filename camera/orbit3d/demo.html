@@ -627,8 +627,8 @@ let optsSent = null;
 function applyShow(s) {
   if (!s) return;
   const prev = JSON.stringify(SHOW);
-  if (s.mode && s.mode !== SHOW.mode) { SHOW.mode = s.mode; optsSent = null; modes.setMode?.(s.mode); }
-  if (s.scale && s.scale !== SHOW.scale) { SHOW.scale = s.scale; modes.setScale?.(s.scale); }
+  if (s.mode && s.mode !== SHOW.mode) { SHOW.mode = s.mode; optsSent = null; modes.setMode?.(s.mode); engagePieces(); }   // demo: the new mode's stand-ins
+  if (s.scale && s.scale !== SHOW.scale) { SHOW.scale = s.scale; modes.setScale?.(s.scale); engagePieces(); }
   if (s.mode_opts) { SHOW.mode_opts = s.mode_opts; const o = s.mode_opts[SHOW.mode], j = JSON.stringify(o); if (o && j !== optsSent) { optsSent = j; modes.setOpts?.(SHOW.mode, o); } }
   if (s.reset != null) { if (SHOW.reset != null && s.reset !== SHOW.reset) modes.reset?.(); SHOW.reset = s.reset; }   // the first value seen is not a press
   if (s.freeze != null) SHOW.freeze = !!s.freeze;
@@ -720,7 +720,7 @@ function tick(now) {
   updateSky(smooth.earth, smooth.moon, dt, now);
 
   // orbits view: figures bigger than scale (sizes from orbits-geo.js FIG; the lowest orbits hug their edges), Seldons smaller than the old 150 mm, no base rings
-  const fig = modes.orbitsLike && modes.orbitsFigures(), TS = modes.trueScale && modes.mode !== 'orbits';   // true scale: the modes draw Earth and the Moon, the stand-ins go
+  const fig = modes.orbitsLike && modes.orbitsFigures(), TS = modes.drawsBodies;   // true scale: the modes draw Earth and the Moon, the stand-ins go
   models.earth.scale.setScalar(fig ? fig.earth / EARTH_SPHERE_R : 1); models.moon.scale.setScalar(fig ? fig.moon / MOON_SPHERE_R : 1);
   for (const id of SATS) if (models[id]) models[id].scale.setScalar(fig ? ORB_SELDON_SCALE : SELDON_SCALE);
   for (const [k, r] of Object.entries(baseRings)) { const P = smooth[k]; r.visible = !!P && !fig && !(TS && (k === 'earth' || k === 'moon')); if (P) r.position.set(P.x, -P.y, 0); }
