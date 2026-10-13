@@ -1401,7 +1401,7 @@ export function createModes(ctx) {
     if (M) setPts(OR.soi, circPts(M.cx, M.cy, maps.zone, 128)); else hide(OR.soi);   // the Moon zone (unlabelled)
     if (eOn) refRing(OR.geo, OR.geoL, maps, OGEO.R_GEO, 'GEO'); else hide(OR.geo, OR.geoL);   // no GEO around an Earth that is off the table (user, Oct 9)
     if (!mOn && E.rho(OGEO.R_GEO) - E.rho(OGEO.R_LEO) >= LEO_GAP) refRing(OR.leo, OR.leoL, maps, OGEO.R_LEO, 'LEO'); else hide(OR.leo, OR.leoL);   // no LEO while the Moon is on the table (user, Oct 9); nor when it would crowd GEO
-    setText(OR.foot, 'Figures not to scale.'); place(OR.foot, SW() / 2, SH() - MARG - 4, 'cm', 0);
+    setText(OR.foot, 'Not to scale.'); place(OR.foot, SW() / 2, SH() - MARG - 4, 'cm', 0);
     updTransfer(maps, bodies[0], bodies[1], dt, !!(pc[0]?.moving || pc[1]?.moving || P.earth?.moving || P.moon?.moving));
     bodies.forEach((b, k) => {
       if (!b) { hide(OR.ring[k], OR.dot[k], OR.tag[k]); OR.last[k] = null; return; }
