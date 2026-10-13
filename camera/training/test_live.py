@@ -115,3 +115,24 @@ for k in range(120, 140):                               # slid 30 mm (within NEA
     T.update('earth', [D(200 + min(30, (k - 119) * 3), 150)], k * .05)
 assert abs(T.pieces['earth']['x_mm'] - 230) < 4, T.pieces['earth']['x_mm']
 print('ok')
+
+# --- show state (presenter): merge, validation, reset counter, persistence, GET/POST over HTTP
+import threading, http.client
+from http.server import ThreadingHTTPServer
+live.SHOW_JSON = live.Path(tempfile.mkdtemp()) / 'show.json'
+assert live.show_get()['mode'] == 'geo' and live.show_get()['reset'] == 0
+s = live.show_update({'mode': 'dro', 'scale': 'true', 'sky': 'bogus', 'freeze': 'yes', 'mode_opts': {'competitor': {'alt': 'GEO'}}})
+assert s['mode'] == 'dro' and s['scale'] == 'true' and s['sky'] == 'still' and s['freeze'] is False   # bad values ignored
+live.show_update({'mode_opts': {'competitor': {'x': 1}}, 'freeze': True, 'reset': True})
+s = live.show_get(); assert s['mode_opts']['competitor'] == {'alt': 'GEO', 'x': 1} and s['freeze'] and s['reset'] == 1
+live.show.update(json.loads(json.dumps(live.SHOW_DEFAULT))); live.show_load()                      # "restart"
+s = live.show_get(); assert s['mode'] == 'dro' and s['freeze'] and s['reset'] == 1, s
+srv = ThreadingHTTPServer(('127.0.0.1', 0), live.Handler); srv.daemon_threads = True
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+c = http.client.HTTPConnection('127.0.0.1', srv.server_port)
+c.request('POST', '/show', json.dumps({'mode': 'capture', 'reset': True})); r = json.loads(c.getresponse().read())
+assert r['mode'] == 'capture' and r['reset'] == 2
+c.request('GET', '/show'); assert json.loads(c.getresponse().read()) == r
+c.request('POST', '/show', '{nope'); assert c.getresponse().status == 400
+srv.shutdown()
+print('ok')

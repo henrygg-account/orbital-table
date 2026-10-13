@@ -26,3 +26,6 @@ camera/orbit3d/assets/sky/
 # compiled binary (source: camera/camview.swift)
 camera/camview
 camera/training/tracker_events.log
+
+# presenter state (live.py)
+camera/training/show.json

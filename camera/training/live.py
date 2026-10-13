@@ -364,6 +364,53 @@ class CalibRequest:
         return True
 
 
+# ---------------------------------------------------------------- show state
+# The presenter's controls (presenter.html, or keys on the TV page): one object, broadcast in every /events message.
+# Kept in memory and in show.json (gitignored) so a restart of live.py keeps the mode. Contract: NIGHT-AGENTS.md.
+SHOW_JSON = HERE / 'show.json'
+SHOW_DEFAULT = {'mode': 'geo', 'scale': 'show', 'freeze': False, 'sky': 'still', 'reset': 0, 'mode_opts': {}}
+SHOW_CHOICES = {'mode': ('geo', 'capture', 'dro', 'competitor'), 'scale': ('show', 'true'), 'sky': ('still', 'slow', 'off')}
+show = json.loads(json.dumps(SHOW_DEFAULT))
+show_lock = threading.Lock()
+
+
+def show_load():
+    try:
+        saved = json.loads(SHOW_JSON.read_text())
+        show_update({k: v for k, v in saved.items() if k != 'reset'}, save=False)   # a restart is not a reset
+        show['reset'] = int(saved.get('reset', 0))
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+def show_update(patch, save=True):
+    """Merge a partial update (bad values are ignored; reset: true bumps the counter; mode_opts merge per mode); returns the state."""
+    with show_lock:
+        for k, ok in SHOW_CHOICES.items():
+            if patch.get(k) in ok:
+                show[k] = patch[k]
+        if isinstance(patch.get('freeze'), bool):
+            show['freeze'] = patch['freeze']
+        if patch.get('reset') is True:
+            show['reset'] += 1
+        if isinstance(patch.get('mode_opts'), dict):
+            for m, o in patch['mode_opts'].items():
+                if isinstance(o, dict):
+                    show['mode_opts'][m] = {**show['mode_opts'].get(m, {}), **o}
+        out = json.loads(json.dumps(show))
+    if save:
+        try:
+            SHOW_JSON.write_text(json.dumps(out))
+        except OSError:
+            pass
+    return out
+
+
+def show_get():
+    with show_lock:
+        return json.loads(json.dumps(show))
+
+
 # ---------------------------------------------------------------- http
 def snapshot():
     now = time.time()
@@ -372,7 +419,7 @@ def snapshot():
         return {'t': now, 'fps': round(state['fps'], 1), 'model_ms': round(state.get('model_ms', 0)), 'model_parts': state.get('model_parts'), 'backend': state.get('backend'),
                 'idle': state.get('idle', False), 'calibrated': state['H'] is not None,
                 'screen_mm': cfg['screen_mm'], 'pieces': trk.feed(now), 'hands': state.get('hands', []),
-                'rec': state['rec'].status() if state.get('rec') else None,
+                'rec': state['rec'].status() if state.get('rec') else None, 'show': show_get(),
                 **{k: state.get('tune', {}).get(k, v) for k, v in PAGE_KNOBS.items()}}
 
 
@@ -396,6 +443,8 @@ class Handler(BaseHTTPRequestHandler):
                 while True:
                     self.wfile.write(f'data: {json.dumps(snapshot())}\n\n'.encode()); self.wfile.flush()
                     time.sleep(1 / 30)
+            elif path == '/show':
+                self._send(json.dumps(show_get()).encode(), 'application/json')
             elif path == '/record':
                 q = dict(kv.split('=', 1) for kv in self.path.partition('?')[2].split('&') if '=' in kv)
                 with lock:
@@ -441,6 +490,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
+            if self.path.split('?')[0] == '/show':               # presenter.html / demo.html keys: a partial update, merged
+                try:
+                    res = show_update(json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or b'{}'))
+                except ValueError:
+                    return self._send(b'{"error":"bad json"}', 'application/json', 400)
+                return self._send(json.dumps(res).encode(), 'application/json')
             if self.path.split('?')[0] == '/record/log':         # record-guide.html: the shot list with each step's times
                 try:
                     body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or b'{}')
@@ -520,8 +575,10 @@ def static_file(path):
         return None
 
 
-def serve(port):
-    srv = ThreadingHTTPServer(('127.0.0.1', port), Handler)
+def serve(port, lan=True):
+    # 0.0.0.0 by default: the presenter's tablet (presenter.html) is another device on the LAN. --local-only keeps it on
+    # this machine. (Windows asks once to allow Python through the firewall; the POST routes are open to the LAN too.)
+    srv = ThreadingHTTPServer(('0.0.0.0' if lan else '127.0.0.1', port), Handler)
     srv.daemon_threads = True
     threading.Thread(target=srv.serve_forever, daemon=True).start()
 
@@ -737,6 +794,7 @@ def main():
     ap.add_argument("--conf", type=float, default=0.05)   # low is fine: the tracker ignores one-off far detections
     ap.add_argument('--imgsz', type=int, default=960)
     ap.add_argument('--port', type=int, default=8780)
+    ap.add_argument('--local-only', action='store_true', help='listen on 127.0.0.1 only (default: the LAN, for the presenter tablet)')
     ap.add_argument('--no-browser', action='store_true')
     ap.add_argument('--no-window', action='store_true', help='no OpenCV preview (headless)')
     ap.add_argument('--exposure', choices=('fixed', 'auto'), default='fixed',
@@ -757,7 +815,8 @@ def main():
         print('tuning from', TUNING_JSON.name)
     except (OSError, ValueError):
         set_tuning({}, save=False)
-    serve(a.port)
+    show_load()
+    serve(a.port, lan=not a.local_only)
 
     idx, name = (a.index, f'camera {a.index}') if a.index is not None else find_camera(a.camera)
     dev = f'camera {idx} ({name})'
