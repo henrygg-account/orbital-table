@@ -142,6 +142,16 @@ check('a hand carrying the piece (outline on it) moves it along', pos(T, 'seldon
 t = run_h(T, [([det('seldon-1', 880, 400)] + others, None)] * FPS, t)
 check('...and it settles where it is put down', abs(pos(T, 'seldon-1')[0] - 880) < 1)
 
+T, t = settled()                                                         # carried, put down, and waved over before it could lock
+t = run_h(T, [([det('seldon-1', 600 + 20 * k, 400)] + others, [box(600 + 20 * k, 400, 160, 120)]) for k in range(15)], t)
+t = run_h(T, [([det('seldon-1', 880, 400)] + others, None)] * 6, t)                      # hand lifted away for 0.4 s: not locked yet
+put = pos(T, 'seldon-1')
+check('...(set down at 880, not yet locked)', T.STILL_S > 6 / FPS and abs(put[0] - 880) < 1)
+t = run_h(T, [([det('seldon-1', 880 + 25 * (k % 2), 400 + 30 * (k % 3 - 1))] + others, [box(760, 400, 100, 100)]) for k in range(2 * FPS)], t)
+check('hand waving over a piece that has not locked yet does not move it', pos(T, 'seldon-1') == put)
+t = run_h(T, [([det('seldon-1', 880 + 45, 400)] + others, [box(760, 400, 100, 100)]) for k in range(FPS)], t)
+check('...nor a detection drifting 45 mm off it under the waving hand', pos(T, 'seldon-1') == put)
+
 T, t = settled()                                                         # picked up, hand holds it, put down 300 mm away
 t = run_h(T, [(others, [box(600, 400)])] * 6, t)                          # covered by the hand
 t = run_h(T, [([det('seldon-1', 900, 400)] + others, [box(900, 400)])] * (FPS // 2), t)   # reappears under the hand

@@ -15,7 +15,8 @@ The detector is treated as a noisy sensor; the tracker decides what is true, und
      only for WEAK_S after their last confident one (a phantom on the screen's own glow fades out). Earth (blue) is never
      placed on colour alone: the screen glows blue through the film.
   7. Size: a box far bigger or smaller than the piece can be (a hand, an arm, a reflection) is ignored.
-  8. A hand near a still piece does not move it (Oct 12). A locked piece ignores detections that drift off it while a
+  8. A hand near a piece does not move it unless it carries it (Oct 12; also before the piece has locked, Oct 13). A piece
+     that is locked, or has a hand near and is not being carried, ignores detections that drift off it while a
      hand outline is within HAND_NEAR_MM; it only follows when the detection has moved HAND_PUSH_MM, held there for
      HAND_PUSH_S, with the hand actually on it (the outline within HAND_HOLD_MM): someone carrying it. New pieces and
      relocations within HAND_CAND_MM of a hand must be seen HAND_RELOC_S, not CONFIRM_FRAMES (a hand called Seldon
@@ -84,6 +85,8 @@ class Tracker:
     HAND_CAND_MM = 60.0     # new / relocated pieces this close to a hand outline need to be seen HAND_RELOC_S, not just a few frames
     HAND_RELOC_S = 0.7
     HAND_MEMORY_S = 0.5     # an outline stays valid this long after the model last saw it (it flickers)
+    CARRY_HOLD_S = 0.2      # a carry (piece moving with a hand on it) ends this long after it last moved (~4 frames); outside a
+                            # carry the hand gate applies whether or not the piece has locked yet (waving right after a placement, Oct 13)
 
     def __init__(self, cfg):
         self.cfg = cfg
@@ -242,14 +245,17 @@ class Tracker:
         p['vx'] = 0.6 * p['vx'] + 0.4 * (zx - p['ex']) / dt
         p['vy'] = 0.6 * p['vy'] + 0.4 * (zy - p['ey']) / dt
         rest = p['rest']
-        if now - rest[2] > self.STILL_S and np.hypot(zx - p["x_mm"], zy - p["y_mm"]) > self.BAND_STILL_MM:
+        hand = self.hand_near(p['x_mm'], p['y_mm'], self.HAND_NEAR_MM) or self.hand_near(zx, zy, self.HAND_NEAR_MM)
+        carrying = now - p.get('carry_t', -1e9) < self.CARRY_HOLD_S
+        gated = now - rest[2] > self.STILL_S or (hand and not carrying)    # locked, or a hand about and no carry going on
+        if gated and np.hypot(zx - p["x_mm"], zy - p["y_mm"]) > self.BAND_STILL_MM:
             # locked, and the detection is away from where the piece sits: a deliberate move, or a hand, or noise
             e = p.get('exc')
             if e and now - e['t'] < 0.3 and np.hypot(zx - e['x'], zy - e['y']) < self.CONFIRM_MM + 0.5 * self.VMAX_MM_S * (now - e['t']):
                 e.update(x=zx, y=zy, n=e['n'] + 1, t=now)
             else:
                 e = p['exc'] = {'x': zx, 'y': zy, 'n': 1, 't0': now, 't': now}
-            if self.hand_near(p['x_mm'], p['y_mm'], self.HAND_NEAR_MM) or self.hand_near(zx, zy, self.HAND_NEAR_MM):
+            if hand:
                 carried = (np.hypot(zx - p["x_mm"], zy - p["y_mm"]) >= self.HAND_PUSH_MM and e['n'] >= self.HAND_PUSH_FRAMES
                            and now - e['t0'] >= self.HAND_PUSH_S and self.hand_dist(zx, zy) <= self.HAND_HOLD_MM)
                 ok = carried
@@ -261,6 +267,8 @@ class Tracker:
                     p['strong_t'] = now
                 return
             p['sx'], p['sy'] = zx, zy                            # accepted: jump to it, unlocked from here on
+            if hand:
+                p['carry_t'] = now                               # a carry starts: follow it freely while the hand moves it
         p.pop('exc', None)
         k = 1.0 if np.hypot(zx - p['sx'], zy - p['sy']) > 2 * self.BAND_STILL_MM else self.SMOOTH   # smooth jitter, not real moves
         ex = p['sx'] + k * (zx - p['sx'])                        # what is published is smoothed; matching uses the raw ex, ey
@@ -271,6 +279,8 @@ class Tracker:
         band = self.BAND_STILL_MM if now - rest[2] > self.STILL_S else self.BAND_MOVING_MM
         if np.hypot(ex - ax, ey - ay) > band:
             ax, ay = ex, ey
+            if carrying and self.hand_dist(zx, zy) <= self.HAND_HOLD_MM:
+                p['carry_t'] = now                               # still being carried: keep following
         p.update(x_mm=ax, y_mm=ay, ex=zx, ey=zy, sx=ex, sy=ey, rest=rest, u=d['u'], v=d['v'], conf=d['conf'], t=now)
         if d['conf'] >= self.CONF_NEW:
             p['strong_t'] = now
