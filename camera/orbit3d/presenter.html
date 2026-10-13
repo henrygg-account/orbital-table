@@ -24,7 +24,7 @@
   .dot.on { background: var(--mint); }
   button { font: inherit; color: inherit; cursor: pointer; border: 1px solid var(--line); background: rgba(246,248,248,.04); }
   button:active { background: rgba(246,248,248,.14); }
-  .modes { flex: 1; display: grid; grid-template-rows: repeat(4, 1fr); gap: 10px; min-height: 0; }
+  .modes { flex: 1; display: grid; grid-template-rows: repeat(2, 1fr); gap: 10px; min-height: 0; }
   .mode { border-radius: 18px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 6px; padding: 0 22px; text-align: left; }
   .mode b { font-weight: 500; font-size: 26px; letter-spacing: -.01em; color: #f6f8f8; }
   .mode i { font-style: normal; font-family: var(--font-mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
@@ -64,8 +64,8 @@
   <div class="note" id="rnote"></div>
 </div>
 <script>
-const MODES = [['geo', 'LEO to GEO'], ['capture', 'Capture / Defend'], ['dro', 'LEO to DRO'], ['competitor', 'Competitor']];
-const TRUE_OK = ['geo', 'dro'], ZOOM_OK = ['geo', 'capture', 'competitor'];   // what the table supports in each mode
+const MODES = [['geo', 'LEO to GEO'], ['dro', 'LEO to DRO']];   // Capture / Defend and Competitor are set aside for now
+const TRUE_OK = ['geo', 'dro'], ZOOM_OK = ['geo'];   // what the table supports in each mode
 const HOST = new URLSearchParams(location.search).get('host'), BASE = HOST ? `http://${HOST}` : '';   // ?host=ip:8780 if served elsewhere
 const $ = id => document.getElementById(id);
 let show = { mode: 'geo', scale: 'show', zoom: 1 }, lastMsg = 0, dragging = false;
@@ -81,7 +81,7 @@ function render() {
   const ts = $('scale'); ts.disabled = !tOk; ts.classList.toggle('on', show.scale === 'true' && tOk); ts.textContent = show.scale === 'true' && tOk ? 'True scale · on' : 'True scale';
   const z = $('zoom'); z.disabled = !zOk; if (!dragging) z.value = Math.round((show.zoom || 1) * 100);
   $('zv').textContent = `${(+z.value / 100).toFixed(1)}×`;
-  $('note').textContent = !tOk ? 'True scale: LEO to GEO and LEO to DRO only.' : show.scale === 'true' ? 'True scale: zoom is fixed.' : show.mode === 'dro' ? 'LEO to DRO: the Earth and Moon pieces set the scale.' : '';
+  $('note').textContent = !tOk ? 'True scale: LEO to GEO and LEO to DRO only.' : show.scale === 'true' ? 'True scale: zoom is fixed.' : show.mode === 'dro' ? 'LEO to DRO: the Earth and Moon pieces set the scale.' : !MODES.some(m => m[0] === show.mode) ? 'The table is in another mode: pick one above.' : '';
 }
 function post(patch) {   // optimistic: the phone answers at once; /events confirms
   show = { ...show, ...patch }; render();

@@ -651,8 +651,8 @@ function postShow(patch) {                                  // live.py is the so
 if (Q.get('show')) { const o = {}; for (const kv of Q.get('show').split(',')) { const [k, v] = kv.split(':'); o[k] = k === 'freeze' || k === 'play' ? v === '1' : k === 't' || k === 'zoom' ? +v : v; } applyShow(o); }   // test hook
 addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
-  const k = e.key.toLowerCase(), M = ['geo', 'capture', 'dro', 'competitor'];
-  if (k >= '1' && k <= '4') postShow({ mode: M[+k - 1] });
+  const k = e.key.toLowerCase(), M = ['geo', 'dro'];   // CAPTURE / DEFEND and COMPETITOR are set aside for now (still ?mode=)
+  if (k >= '1' && k <= String(M.length)) postShow({ mode: M[+k - 1] });
   else if (k === 't' && !e.shiftKey) postShow({ scale: SHOW.scale === 'true' ? 'show' : 'true' });
   else if (k === 'f' && !e.shiftKey) postShow({ freeze: !SHOW.freeze });
   else if (k === 'r') postShow({ reset: true });

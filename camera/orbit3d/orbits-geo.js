@@ -46,7 +46,14 @@ export function makeMaps(earth = LAYOUT.earth, moon = LAYOUT.moon, S = SCALE) {
     const k = Math.max(MIN_SPAN, (Dmm || S.noMoonMm) - offE) / (D_EM - R_E);  // mm per km of altitude, everywhere
     const lin = (cx, cy, mu, R, off) => withXY({ cx, cy, mu, R, off, rho: r => off + (r - R) * k, r: rho => R + (rho - off) / k });
     const thM = moon ? Math.atan2(-(moon[1] - ey), moon[0] - ex) : 0;
-    return { E: lin(ex, ey, MU_E, R_E, offE), M: moon && droStretch(lin(moon[0], moon[1], MU_M, R_M, offM), thM), Dmm, zone: moon ? offM + (R_SOI - R_M) * k : 0, k, true: true, thM };
+    let E = lin(ex, ey, MU_E, R_E, offE);
+    if (S.view && Dmm) {                                          // enlarged LEO / GEO (DRO_VIEW), the rest as before from GEO out
+      const a = S.view.leoMm, g = Math.min(S.view.geoMm, S.view.maxShare * Dmm), kg = (g - a) / (R_GEO - R_LEO), ko = (Dmm - g) / (D_EM - R_GEO);
+      E = withXY({ cx: ex, cy: ey, mu: MU_E, R: R_E, off: offE,
+        rho: r => r <= R_LEO ? Math.max(offE, a * r / R_LEO) : r <= R_GEO ? a + (r - R_LEO) * kg : g + (r - R_GEO) * ko,
+        r: rho => rho <= a ? R_LEO : rho <= g ? R_LEO + (rho - a) / kg : R_GEO + (rho - g) / ko });
+    }
+    return { E, M: moon && droStretch(lin(moon[0], moon[1], MU_M, R_M, offM), thM), Dmm, zone: moon ? offM + (R_SOI - R_M) * k : 0, k, true: true, thM };
   }
   const k = Math.min(S.leoMm / R_LEO, Dmm ? S.geoShare * Dmm / R_GEO : Infinity), rhoG = k * R_GEO;   // mm per km inside GEO
   const far = Dmm && Dmm > rhoG;
@@ -62,6 +69,9 @@ export function makeMaps(earth = LAYOUT.earth, moon = LAYOUT.moon, S = SCALE) {
 // ---- LEO TO GEO / LEO TO DRO views (modes 'geo', 'dro') ----
 // geo: Earth alone, drawn as the old squeezed map: LEO well clear of the 66 mm base, GEO at geoMm, linear in radius between.
 export const GEO_VIEW = { leoMm: 78, geoMm: 250 };
+// LEO TO DRO: Earth's own neighbourhood enlarged (not to scale) so LEO and GEO read: LEO where a Seldon touching the Earth piece
+// stands, GEO well out; from GEO to the Moon the true-ish scale carries on (owner, Oct 13). geoMm is capped at maxShare of Earth-Moon.
+export const DRO_VIEW = { leoMm: 66, geoMm: 180, maxShare: .35 };
 export function makeGeoMaps(earth, S = GEO_VIEW) {
   const [ex, ey] = earth, a = S.leoMm, kk = (S.geoMm - a) / (R_GEO - R_LEO);
   const E = withXY({ cx: ex, cy: ey, mu: MU_E, R: R_E, rho: r => r >= R_LEO ? a + (r - R_LEO) * kk : a * r / R_LEO, r: rho => rho >= a ? R_LEO + (rho - a) / kk : rho / a * R_LEO });

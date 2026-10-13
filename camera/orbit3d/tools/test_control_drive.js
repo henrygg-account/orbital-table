@@ -99,5 +99,11 @@ await section('zoom', async () => {
   const ts = T().modes.testState; check('zoom 0.5: LEO stays clear of the Earth piece', ts.rho.leo >= 60 && ts.geoView.leoMm >= 60 && Math.abs(ts.geoView.geoMm - 125) < .01, `capture LEO ${ts.rho.leo} mm, geo LEO ${ts.geoView.leoMm} / GEO ${ts.geoView.geoMm} mm`);
   await post({ zoom: 1 }); await until(() => T().SHOW.zoom === 1, 'zoom back to 1');
 });
+await section('LEO TO DRO scale', async () => {
+  const G = await import('/orbits-geo.js'), maps = G.makeMaps([230, 400], [1200, 400], { ...G.SCALE, view: G.DRO_VIEW }), E = maps.E;
+  check('LEO TO DRO: LEO and GEO enlarged (66 / 180 mm)', Math.abs(E.rho(G.R_LEO) - 66) < .01 && Math.abs(E.rho(G.R_GEO) - 180) < .01, `LEO ${E.rho(G.R_LEO).toFixed(1)} mm, GEO ${E.rho(G.R_GEO).toFixed(1)} mm`);
+  check('LEO TO DRO: a piece reads back the orbit it is drawn on', [100, 150, 300, 600].every(q => Math.abs(E.rho(E.r(q)) - q) < .01), 'rho -> r -> rho');
+  check('LEO TO DRO: the Moon is still at the Moon', Math.abs(E.rho(G.D_EM) - 970) < .5, `${E.rho(G.D_EM).toFixed(1)} mm`);
+});
 check('no errors on the page in any mode', !pageErrors.length, pageErrors.slice(0, 3).join(' | ') || 'none');
 await J('/result', out);

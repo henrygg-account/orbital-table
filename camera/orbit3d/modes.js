@@ -1471,7 +1471,7 @@ export function createModes(ctx) {
     const ids = ['seldon-1', 'seldon-2'].filter(id => P[id]).slice(0, geo ? 2 : 1);   // dro: one Seldon (Seldon-1 if both are seen)
     const msg = !E || (!geo && !Mo) ? msgFor(E, Mo, !geo) : !ids.length ? 'Place Seldon-1.' : '';
     if (!E || (!geo && !Mo)) { setRails(mode, { eyebrow: EYE, msg }); hide(OR.trG.et, OR.trG.etA, OR.trG.etC); OR.tr.xk = OR.tr.key = OR.trG.xk = OR.trG.key = null; return; }
-    const e = [E.x_mm, E.y_mm], maps = TS ? OGEO.makeTrueMaps(e, [Mo.x_mm, Mo.y_mm], { noZone: geo, foot: TRUE_FOOT }) : geo ? OGEO.makeGeoMaps(e, geoView()) : OGEO.makeMaps(e, [Mo.x_mm, Mo.y_mm]);
+    const e = [E.x_mm, E.y_mm], maps = TS ? OGEO.makeTrueMaps(e, [Mo.x_mm, Mo.y_mm], { noZone: geo, foot: TRUE_FOOT }) : geo ? OGEO.makeGeoMaps(e, geoView()) : OGEO.makeMaps(e, [Mo.x_mm, Mo.y_mm], DRO_SCALE);
     pieceObs = ids.map(id => ({ x: P[id].x_mm, y: P[id].y_mm, r: PIECE_R[id] + TAG_GAP }));
     if (TS) {   // Earth and the Moon drawn at true relative size (the 3D stand-ins are hidden by the page)
       [[E, R_E, 0, 'EARTH'], [Mo, R_M, 1, 'MOON']].forEach(([c, R, i, name]) => {
@@ -1487,7 +1487,7 @@ export function createModes(ctx) {
       const p = P[id], k = kOf(id), raw = OGEO.bodyAt(maps, p.x_mm, p.y_mm);
       const b = geo ? OGEO.lockGeo(maps, raw, GD.was[k], GD.geoBand) : OGEO.lockDro(maps, p.x_mm, p.y_mm, raw, GD.was[k], GD.droKm);
       GD.was[k] = !!b.locked;
-      if (geo && !b.locked) { const l = OGEO.lockLeo(maps, b, GD.wasLeo[k], GD.leoBand); GD.wasLeo[k] = !!l.leo; return l; }
+      if (!b.locked) { const l = OGEO.lockLeo(maps, b, GD.wasLeo[k], GD.leoBand); GD.wasLeo[k] = !!l.leo; return l; }
       GD.wasLeo[k] = false; return b;
     });
     for (const k of [0, 1]) if (!ids.some(id => kOf(id) === k)) GD.was[k] = GD.wasLeo[k] = false;
@@ -1554,6 +1554,7 @@ export function createModes(ctx) {
   function reset() { OR.last = [null, null, null]; for (const T of [OR.tr, OR.trG]) Object.assign(T, { draw: 0, still: 0, key: null }); }   // dots restart from their pieces, the transfer is drawn out again
   // demo stand-ins for geo / dro (what the camera would see); `given` names the pieces the URL already placed
   // standAt: where a piece stands (mm from Earth's centre) for an orbit of r km; in true scale that is the footprint rule, not the drawn ring
+  const DRO_SCALE = { ...OGEO.SCALE, view: OGEO.DRO_VIEW };   // LEO TO DRO: LEO and GEO enlarged about Earth (orbits-geo.js DRO_VIEW)
   const standAt = (maps, r) => maps.E.rho0 != null ? maps.E.rho0 + Math.max(0, r - OGEO.R_LEO) * maps.k : maps.E.rho(r);
   function gdDemo(mode, pc, given = []) {
     const TS = scaleMode === 'true', out = {}, use = k => !given.includes(k), at = (B, rho, deg) => { const t = deg * Math.PI / 180; return { x_mm: B.cx + rho * Math.cos(t), y_mm: B.cy - rho * Math.sin(t), seen_ago: 0 }; };
@@ -1574,7 +1575,7 @@ export function createModes(ctx) {
     } else {
       const L = OGEO.LAYOUT, e = given.includes('earth') ? pc.earth : { x_mm: TS ? fixedEM().earth.x_mm : L.earth[0], y_mm: TS ? fixedEM().earth.y_mm : L.earth[1] };
       const m = given.includes('moon') ? pc.moon : { x_mm: TS ? fixedEM().moon.x_mm : L.moon[0], y_mm: TS ? fixedEM().moon.y_mm : L.moon[1] };
-      const maps = TS ? OGEO.makeTrueMaps([e.x_mm, e.y_mm], [m.x_mm, m.y_mm], { foot: TRUE_FOOT }) : OGEO.makeMaps([e.x_mm, e.y_mm], [m.x_mm, m.y_mm]);
+      const maps = TS ? OGEO.makeTrueMaps([e.x_mm, e.y_mm], [m.x_mm, m.y_mm], { foot: TRUE_FOOT }) : OGEO.makeMaps([e.x_mm, e.y_mm], [m.x_mm, m.y_mm], DRO_SCALE);
       if (use('earth')) out.earth = { x_mm: e.x_mm, y_mm: e.y_mm, seen_ago: 0 };
       if (use('moon')) out.moon = { x_mm: m.x_mm, y_mm: m.y_mm, seen_ago: 0 };
       if (use('s1')) out['seldon-1'] = at(maps.E, TS ? standAt(maps, OGEO.R_LEO) + 4 : maps.E.rho(Math.max(OGEO.R_LEO, maps.E.r(EARTH_PIECE_R + SELDON_BASE_R + 2))), 135);
