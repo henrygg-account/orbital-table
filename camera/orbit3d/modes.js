@@ -13,9 +13,9 @@ const MU_E = 398600.4418, MU_M = 4902.8, R_E = 6378.1, R_M = 1737.4, L_KM = 3844
 const R_LEO = R_E + 400, GEO_R = 42164, MOON_SOI = 66100;
 const EARTH_PIECE_R = 33, MOON_PIECE_R = 33;             // 66 mm bases
 const SELDON_BASE_R = 33;                                 // a Seldon can't sit closer to Earth than the two bases touching
-const MODE_NAMES = ['mission', 'intercept', 'dvmap', 'engage', 'orbits'];
+const MODE_NAMES = ['mission', 'intercept', 'dvmap', 'engage', 'orbits', 'capture', 'competitor'];
 const ARCHIVED = new Set(['intercept']);                   // kept in the code, not reachable (not even by ?mode=)
-const MODE_TITLES = ['MISSION', 'INTERCEPT', 'DELTA-V MAP', 'ENGAGEMENT', 'ORBITS'];
+const MODE_TITLES = ['MISSION', 'INTERCEPT', 'DELTA-V MAP', 'ENGAGEMENT', 'ORBITS', 'CAPTURE / DEFEND', 'COMPETITOR'];   // 'engage' = the sim-backed advanced CAPTURE / DEFEND (setOpts('capture', {sim: true}))
 const C = { mint: 0x0ee3a6, mint300: 0x6ff5cf, mint900: 0x063f30, white: 0xf6f8f8, fog100: 0xdde3e4, fog200: 0xb8c1c3, fog300: 0x8a969a, fog400: 0x5c6b70, ink900: 0x0d1113, black: 0x0a0d0d };
 const BG = C.black;
 const MARG = 24;                                          // safe margin, mm
@@ -62,6 +62,27 @@ function invWarp(rho, b, push) {
 }
 
 const OGEO = await import('./orbits-geo.js?v=' + Date.now());   // orbits view geometry + maths (cache-bust like demo.html's import)
+const CGEO = await import('./capture-geo.js?v=' + Date.now());  // CAPTURE / DEFEND + COMPETITOR plans (Kepler maths, tools/test_capture_geo.html)
+
+// ---- COMPETITOR: every number the mode shows comes from this block. Edit here.
+const COMP = {
+  dry_kg: 200,                                   // same dry mass for both: the Seldon vehicle's 200 kg (orbits-geo.js VEH.dry)
+  us: {
+    name: 'SELDON · ELECTRIC',
+    isp_s: 1000,                                 // orbits-geo.js PROP_MODES ET (electric, 1000 s)
+    accel_mm_s2: 0.5,                            // tools/spiral_mission.py default thrust acceleration; gives data/mission_dro.json's 155 d for 6.7 km/s (50 mN on 200 kg is 0.25 here)
+  },
+  them: {
+    name: 'TYPICAL CHEMICAL TUG',
+    isp_s: 320,                                  // brief: generic bipropellant tug, Isp ~320 s; burns are impulsive so thrust does not matter
+  },
+  dro: {                                         // the LEO -> DRO preset uses the mission files, not circle-to-circle maths
+    us: { dv: 6.70, days: 155.1 },               // data/mission_dro.json: total_dv_kms 6.7002, transfer_days 155.1
+    them: { dv: 3.45, days: 5.458 },             // data/mission_dro.chemical.json: total_dv_kms 3.45, transfer_days 5.458
+  },
+  snapGeoMm: 14,                                 // a Seldon this close (mm) to the GEO ring locks the target to GEO
+  colThem: 0xa592f0,                             // the competitor's colour: brand violet, lightened to read on ink (not the alarm red)
+};
 
 export function createModes(ctx) {
   const { THREE, scene, line, put } = ctx;
@@ -1416,6 +1437,192 @@ export function createModes(ctx) {
     });
   }
 
+  // ================================================================ CAPTURE / DEFEND and COMPETITOR (maths: capture-geo.js)
+  // Both draw about the Earth piece with one log scale (CGEO.rhoOfR: LEO 70 mm, GEO 265 mm, Moon distance 300 mm), "not to scale".
+  // Both play a short film on a loop: clk runs while the pieces are still, restarts when one moves (or on reset()).
+  const OPT = { capture: { scenario: 'capture', path: 'auto', dir: 'auto', speed: 30 }, competitor: { target: null, speed: 26 } };
+  const fmtDur = (s, html = true) => {
+    const u = x => html ? U(x) : ' ' + x;
+    return s < 5400 ? `${Math.round(s / 60)}${u("min")}` : s < 172800 ? `${(s / 3600).toFixed(s < 36000 ? 1 : 0)}${u('h')}` : `${s < 20 * 86400 ? (s / 86400).toFixed(1) : Math.round(s / 86400)}${u('d')}`;
+  };
+  const fmtDvh = dv => dv < 1 ? `${Math.round(dv * 1000)}${U('m/s')}` : `${num(dv)}${U('km/s')}`;
+  const fmtKm = x => `${Math.round(x).toLocaleString('en-US')}${U('km')}`;
+  const cmmAt = (ex, ey, rho) => r => { const q = rho(Math.hypot(r[0], r[1])), a = Math.atan2(r[1], r[0]); return [ex + q * Math.cos(a), ey - q * Math.sin(a)]; };   // km (Earth frame) -> table mm
+  // points along a craft's flight from t0 to t1; denser at both ends (the fast, tight part of a long ellipse is at its ends)
+  const sampleC = (c, t0, t1, n, mm) => { const out = []; for (let i = 0; i <= n; i++) { const p = mm(CGEO.craftAt(c, t0 + (t1 - t0) * (1 - Math.cos(Math.PI * i / n)) / 2).r); out.push(W(p[0], p[1])); } return out; };
+  const outward = (x, y, ex, ey, d) => { const l = Math.hypot(x - ex, y - ey) || 1; return [x + (x - ex) / l * d, y + (y - ey) / l * d]; };
+  function footNote(its, txt) {                                  // "Not to scale." on both long sides, just inside the rails
+    its.forEach((it, i) => { setText(it, txt); place(it, SW() / 2, i === 0 ? SH() - MARG - RAIL_H - 14 : MARG + RAIL_H + 3, 'c', i === 0 ? 0 : 180); });
+  }
+  // film clock: returns animation progress u (0..1) and whether the pieces are settled
+  function filmClock(F, key, moving, dt, lead, dur, hold) {
+    if (key !== F.key) { F.key = key; F.hold = .8; F.clk = 0; F.fresh = true; }
+    if (moving) { F.hold = .8; F.clk = 0; } else if (F.hold > 0) { F.hold -= dt; F.clk = 0; } else F.clk += dt;
+    if (F.clk > lead + dur + hold) F.clk = 0;                     // loop
+    if (F.reset) { F.reset = false; F.clk = 0; F.hold = 0; }
+    if (ctx.engageStart != null && ctx.engageStart !== '' && !isNaN(+ctx.engageStart)) F.clk = +ctx.engageStart;   // test hook ?engt=<s>: freeze the film there
+    return Math.max(0, Math.min(1, (F.clk - lead) / dur));
+  }
+
+  // ---------------------------------------------------------------- CAPTURE / DEFEND
+  // Seldon-1 chases Seldon-2. Same orbit: phasing orbit (lower or higher) and back. Different orbits: wait, Hohmann, arrive together.
+  // DEFEND: the target makes a small burn part-way so it is not at the rendezvous point when the chaser gets there.
+  const CP = { clk: 0, hold: 0, key: null, S: null };
+  const CD = {};
+  CD.ringC = mkLine('capture', 'ref'); CD.ringT = mkLine('capture', 'target');
+  CD.plan = mkLine('capture', 'coastA'); CD.fly = mkRoute('capture'); CD.evP = mkLine('capture', 'link');
+  CD.tailC = mkLine('capture', 'hi'); CD.tailT = mkLine('capture', 'target');
+  CD.link = mkLine('capture', 'link'); CD.keep = mkLine('capture', 'ring'); CD.rdv = mkLine('capture', 'marker');
+  CD.bm = [0, 1, 2].map(() => ({ mark: mkLine('capture', 'marker'), lbl: mkText('capture', 'mt-label', .9) }));
+  CD.dotC = mkDot('capture', C.mint, 3.6, 1); CD.dotT = mkDot('capture', C.white, 3.6, 1);
+  CD.tagC = mkText('capture', 'mt-label', .9); CD.tagT = mkText('capture', 'mt-label', .9);
+  CD.foot = [mkText('capture', 'mt-foot', 1), mkText('capture', 'mt-foot', 1)];
+  const CD_ALL = [CD.ringC, CD.ringT, CD.plan, CD.fly, CD.evP, CD.tailC, CD.tailT, CD.link, CD.keep, CD.rdv, CD.dotC, CD.dotT, CD.tagC, CD.tagT, ...CD.foot, ...CD.bm.flatMap(b => [b.mark, b.lbl])];
+  const CAP_LEAD = 2.5, CAP_HOLD = 8;                              // s: pause on the start, and on the result before it loops
+
+  function capBuild(ex, ey, A, B, same, defend, O) {
+    const ang = p => Math.atan2(-(p.y_mm - ey), p.x_mm - ex), rr = p => CGEO.rOfRho(Math.hypot(p.x_mm - ex, p.y_mm - ey));
+    const pl = CGEO.plan({ r1: rr(A), r2: rr(B), th1: ang(A), th2: ang(B), same, dir: O.dir, defend });
+    const mm = cmmAt(ex, ey, pl.rho), S = { pl, mm, ex, ey };
+    const c0 = pl.ch.segs[0].el, t0 = pl.tg.segs[0].el, per = el => TAU / el.n;
+    setPts(CD.ringT, sampleC(pl.tg, 0, per(t0), 160, mm));
+    if (same) hide(CD.ringC); else setPts(CD.ringC, sampleC(pl.ch, 0, per(c0), 160, mm));
+    const mseg = pl.ch.segs[1], tM = mseg.t0, tM1 = pl.same ? tM + TAU / mseg.el.n : tM + pl.tof;   // the manoeuvre orbit: one lap (phasing) / the half ellipse (transfer)
+    S.man = [tM, tM1]; setPts(CD.plan, sampleC(pl.ch, tM, tM1, 200, mm));
+    if (pl.defend) { const es = pl.tg.segs[1]; S.ev = [es.t0, es.t0 + TAU / es.el.n]; setPts(CD.evP, sampleC(pl.tg, S.ev[0], S.ev[1], 160, mm)); } else hide(CD.evP);
+    S.bpos = pl.burns.map(b => mm(CGEO.craftAt(b.who === 'ch' ? pl.ch : pl.tg, b.t).r));
+    return S;
+  }
+  function updCapture(P, dt) {
+    const O = OPT.capture, E = P.earth, A = P['seldon-1'], B = P['seldon-2'];
+    const defend = /defend/i.test(O.scenario);
+    const EYE = `${defend ? 'DEFEND' : 'CAPTURE'} · SELDON-1 TO SELDON-2`;
+    if (!E || !A || !B) { hide(...CD_ALL); CP.key = null; setRails('capture', { eyebrow: EYE, msg: !E ? 'Place Earth.' : !A && !B ? 'Place both Seldons.' : !A ? 'Place Seldon-1.' : 'Place Seldon-2.' }); return; }
+    const ex = E.x_mm, ey = E.y_mm, rho = p => Math.max(CGEO.RHO.leo, Math.hypot(p.x_mm - ex, p.y_mm - ey));
+    const d12 = Math.abs(rho(A) - rho(B));
+    const same = O.path === 'phasing' || d12 < 3 || (O.path !== 'transfer' && d12 < 25);
+    const key = [ex, ey, A.x_mm, A.y_mm, B.x_mm, B.y_mm].map(v => Math.round(v / 2)).join(',') + [defend, same, O.dir, O.speed].join();
+    if (key !== CP.key) CP.S = null;
+    const moving = !!(A.moving || B.moving || E.moving);
+    const u = filmClock(CP, key, moving, dt, CAP_LEAD, O.speed, CAP_HOLD);
+    if (!CP.S) CP.S = capBuild(ex, ey, A, B, same, defend, O);
+    const { pl, mm } = CP.S, t = CGEO.simTime(pl, u), started = u > 0, done = u >= 1;
+    const pc = CGEO.craftAt(pl.ch, t), pt = CGEO.craftAt(pl.tg, t), qc = mm(pc.r), qt = mm(pt.r);
+    // the flown part of the manoeuvre orbit, brighter than the planned (dashed) one
+    const [m0, m1] = CP.S.man, tf = Math.min(t, m1);
+    if (started && tf > m0 + 1) setRoute(CD.fly, sampleC(pl.ch, m0, tf, Math.max(4, Math.ceil(180 * (tf - m0) / (m1 - m0))), mm)); else hide(CD.fly);
+    // short tails behind both craft
+    const tail = (c, q) => { const seg = c.segs.filter(s => s.t0 <= t + 1e-9).pop(), dT = .1 * TAU / seg.el.n, pts = []; for (let k = 8; k >= 0; k--) { const p = mm(CGEO.craftAt(c, Math.max(0, t - dT * k / 8)).r); pts.push(W(p[0], p[1])); } return pts; };
+    if (started) { setPts(CD.tailC, tail(pl.ch)); setPts(CD.tailT, tail(pl.tg)); } else hide(CD.tailC, CD.tailT);
+    CD.dotC.obj.position.set(qc[0], -qc[1], 1); CD.dotC.on = true; CD.dotT.obj.position.set(qt[0], -qt[1], 1); CD.dotT.on = true;
+    setPts(CD.link, [W(qc[0], qc[1]), W(qt[0], qt[1])]);
+    if (defend) { setPts(CD.keep, circPts(qt[0], qt[1], 15, 48)); } else hide(CD.keep);
+    // evasion orbit appears when the target burns
+    if (pl.defend) { if (t >= pl.te && started) CD.evP.on = true; else hide(CD.evP); }
+    // burn markers: dim until they happen; BURN 1 and BURN 2 share a spot in a phasing capture, so one label carries both
+    const bmk = CD.bm; let used = 0;
+    const shared = pl.same;
+    pl.burns.forEach((b, i) => {
+      const [x, y] = CP.S.bpos[i], hit = started && t >= b.t - 1e-6, B_ = bmk[i];
+      if (shared && i === 1) { hide(B_.mark, B_.lbl); return; }
+      setPts(B_.mark, circPts(x, y, MARK_R * 1.4, 28)); B_.mark.dim = hit ? 1 : .45; B_.lbl.dim = hit ? 1 : .75;
+      const [lx, ly] = outward(x, y, ex, ey, 27);
+      const nm = b.name === 'EVADE' ? 'EVADE' : b.name;
+      const html = shared && i === 0 ? `BURN 1 <b>${fmtDvh(Math.abs(b.dv))}</b><br>BURN 2 <b>${fmtDvh(Math.abs(pl.burns[1].dv))}</b>` : `${nm} <b>${fmtDvh(Math.abs(b.dv))}</b>`;
+      setText(B_.lbl, html); place(B_.lbl, lx, ly, 'cm', faceRot(ly));
+      if (b.who === 'tg' && !(started && t >= b.t - 1e-6)) hide(B_.mark, B_.lbl);   // the evasion is not shown before it happens
+    });
+    // the rendezvous ring on the chaser's second burn
+    { const q = CP.S.bpos[1], hit = done; setPts(CD.rdv, circPts(q[0], q[1], 9, 40)); CD.rdv.dim = hit ? 1 : .0; CD.rdv.on = hit && !defend; }
+    // tags ride the dots: CHASER on the outside, TARGET on the inside, facing the nearest long edge
+    { const [x, y] = outward(qc[0], qc[1], ex, ey, 11); setText(CD.tagC, 'CHASER'); place(CD.tagC, x, y, 'cm', faceRot(y)); }
+    { const [x, y] = outward(qt[0], qt[1], ex, ey, -11); setText(CD.tagT, defend ? 'TARGET' : 'TARGET'); place(CD.tagT, x, y, 'cm', faceRot(y)); }
+    footNote(CD.foot, 'Not to scale.');
+    // rails
+    let lab = 'READY'; if (done) lab = defend ? 'KEEP-OUT HELD' : 'CAPTURED'; else if (started) for (const ev of pl.events) if (ev.t <= t + 1e-6) lab = ev.label;
+    const tt = pl.Ttot * (started ? (done ? 1 : t / pl.Ttot) : 0);
+    const tm = ['T+', `${fmtDur(tt)} <i>of</i> ${fmtDur(pl.Ttot)}`];
+    const path = pl.same ? [['PHASING ORBIT', `${pl.dir === 'down' ? 'LOWER' : 'HIGHER'} <i>${pl.N} ${pl.N > 1 ? 'turns' : 'turn'}</i>`]] : [['TRANSFER', fmtDur(pl.tof)], ['WAIT FOR WINDOW', fmtDur(pl.tw)]];
+    if (defend) setRails('capture', { eyebrow: EYE, hero: String(Math.round(pl.dvTg * 1000)), unit: 'm/s evade', mets: [['PHASE', lab], tm, ['CHASER DELTA-V', fmtDvh(pl.dvCh)], ['MISS DISTANCE', done ? fmtKm(pl.sepEnd) : '—']] });
+    else setRails('capture', { eyebrow: EYE, hero: pl.dvCh < 1 ? String(Math.round(pl.dvCh * 1000)) : num(pl.dvCh), unit: pl.dvCh < 1 ? 'm/s chaser delta-v' : 'km/s chaser delta-v', mets: [['PHASE', lab], tm, ...path] });
+  }
+
+  // ---------------------------------------------------------------- COMPETITOR
+  // Us (electric spiral) and a typical chemical tug both leave LEO for the target orbit set by a Seldon piece's distance from Earth.
+  const KP = { clk: 0, hold: 0, key: null, S: null };
+  const KD = {};
+  KD.leo = mkLine('competitor', 'ref'); KD.tgt = mkLine('competitor', 'target');
+  KD.usP = mkLine('competitor', 'coastA'); KD.usF = mkRoute('competitor');
+  KD.thP = mkLine('competitor', 'ref'); KD.thF = mkLine('competitor', 'hi'); KD.thF.cc = new THREE.Color(COMP.colThem); KD.thF.obj.material.color.set(COMP.colThem);
+  KD.thP.obj.material.color.set(COMP.colThem);
+  KD.dotU = mkDot('competitor', C.mint, 3.8, 1); KD.dotT = mkDot('competitor', COMP.colThem, 3.8, 1);
+  KD.b = [0, 1].map(() => mkLine('competitor', 'marker'));
+  KD.lblTgt = mkText('competitor', 'mt-label', .9); KD.tagU = mkText('competitor', 'mt-label', .95); KD.tagT = mkText('competitor', 'mt-label', .95);
+  KD.lblU = mkText('competitor', 'mt-label', .8); KD.lblT = mkText('competitor', 'mt-label', .8);
+  KD.foot = [mkText('competitor', 'mt-foot', 1), mkText('competitor', 'mt-foot', 1)];
+  const KD_ALL = [KD.leo, KD.tgt, KD.usP, KD.usF, KD.thP, KD.thF, KD.dotU, KD.dotT, ...KD.b, KD.lblTgt, KD.tagU, KD.tagT, KD.lblU, KD.lblT, ...KD.foot];
+  const hexCss = n => '#' + n.toString(16).padStart(6, '0');
+  const CMP_LEAD = 2, CMP_HOLD = 9;
+
+  function updCompetitor(P, dt) {
+    const O = OPT.competitor, E = P.earth, EYE = 'COMPETITOR · LEO TO ';
+    if (!E) { hide(...KD_ALL); KP.key = null; setRails('competitor', { eyebrow: EYE + 'TARGET', msg: 'Place Earth.' }); return; }
+    const ex = E.x_mm, ey = E.y_mm;
+    // target orbit: a preset from the tablet, else the farther Seldon piece (distance from Earth), locking to GEO when near its ring
+    const seld = ['seldon-1', 'seldon-2'].map(k => P[k]).filter(Boolean).sort((a, b) => Math.hypot(b.x_mm - ex, b.y_mm - ey) - Math.hypot(a.x_mm - ex, a.y_mm - ey));
+    const pc = seld[0], tg = O.target;
+    let rT, preset, th0 = -Math.PI / 2;                                  // preset with no piece: leave LEO at the bottom, arrive at the top
+    if (pc) th0 = Math.atan2(-(pc.y_mm - ey), pc.x_mm - ex) + Math.PI;
+    if (tg === 'geo') { rT = CGEO.R_GEO; preset = 'geo'; }
+    else if (tg === 'dro') { rT = CGEO.L_KM; preset = 'dro'; }
+    else if (tg != null && tg !== '' && tg !== 'auto' && isFinite(+tg) && +tg > 0) { rT = CGEO.R_E + +tg; preset = null; }
+    else if (pc) {
+      const q = Math.hypot(pc.x_mm - ex, pc.y_mm - ey); rT = CGEO.rOfRho(q);
+      if (Math.abs(q - CGEO.RHO.geo) < COMP.snapGeoMm) { rT = CGEO.R_GEO; preset = 'geo'; } else if (q >= CGEO.RHO.far - 4) { rT = CGEO.L_KM; preset = 'dro'; }
+    } else { hide(...KD_ALL); KP.key = null; setRails('competitor', { eyebrow: EYE + 'TARGET', msg: 'Place a Seldon to set the target orbit.' }); return; }
+    rT = Math.max(rT, CGEO.R_LEO * 1.06);
+    const moving = !!(E.moving || (pc && pc.moving));
+    const key = [ex, ey, th0, rT].map(v => Math.round(v * (v > 1000 ? .01 : 1) / 2)).join(',') + [preset, O.speed].join();
+    if (key !== KP.key) KP.S = null;
+    const f = filmClock(KP, key, moving, dt, CMP_LEAD, O.speed, CMP_HOLD);
+    if (!KP.S) {                                                       // build the paths once per placement
+      const rho = CGEO.rhoOfR, rho0 = rho(CGEO.R_LEO), rhoT = rho(rT), cmp = CGEO.compare(rT, COMP, preset);
+      const mm = cmmAt(ex, ey, rho), S = { cmp, rhoT, rho0, th0 };
+      // ours: schematic spiral, evenly spaced in the table's radius; ends a touch before the competitor's arrival point so the dots do not overlap
+      const turns = Math.max(1, Math.min(5, Math.floor((rhoT - rho0) / 10))) + .5, v0 = Math.sqrt(CGEO.MU / CGEO.R_LEO), v1 = Math.sqrt(CGEO.MU / rT);
+      S.spiral = fr => { const r = CGEO.MU / (v0 + (v1 - v0) * fr) ** 2, q = rho(r), a = th0 + TAU * turns * (q - rho0) / Math.max(1, rhoT - rho0) - .22 * (q - rho0) / Math.max(1, rhoT - rho0); return [ex + q * Math.cos(a), ey - q * Math.sin(a)]; };
+      S.usPts = Array.from({ length: 401 }, (_, i) => { const p = S.spiral(i / 400); return W(p[0], p[1]); });
+      const { c, h } = CGEO.hohmannCraft(CGEO.R_LEO, rT, th0); S.hc = c; S.h = h;
+      S.thPts = sampleC(c, 0, h.tof, 240, mm);
+      S.thAt = fr => mm(CGEO.craftAt(c, h.tof * fr).r);
+      S.ratio = Math.max(.15, Math.min(1, Math.pow(cmp.them.time / cmp.us.time, .3)));   // the film runs the tug faster, but not at the true ratio (it would arrive in a blink)
+      S.mm = mm; setPts(KD.usP, S.usPts); setPts(KD.thP, S.thPts); setPts(KD.leo, circPts(ex, ey, rho0, 128)); setPts(KD.tgt, circPts(ex, ey, rhoT, 192));
+      KP.S = S;
+    }
+    const S = KP.S, { cmp } = S, fU = f, fT = Math.min(1, f / S.ratio);
+    const pu = S.spiral(fU), pt = S.thAt(fT);
+    const n = Math.max(2, Math.ceil(400 * fU)); if (fU > .002) setRoute(KD.usF, S.usPts.slice(0, n + 1)); else hide(KD.usF);
+    if (fT > .002) setPts(KD.thF, sampleC(S.hc, 0, S.h.tof * fT, Math.max(8, Math.ceil(200 * fT)), S.mm)); else hide(KD.thF);
+    KD.dotU.obj.position.set(pu[0], -pu[1], 1); KD.dotU.on = true; KD.dotT.obj.position.set(pt[0], -pt[1], 1); KD.dotT.on = true;
+    // the two tug burns (start and arrival), and the labels
+    const bp = [S.thAt(0), S.thAt(1)];
+    KD.b.forEach((b, i) => { setPts(b, circPts(bp[i][0], bp[i][1], MARK_R * 1.4, 28)); b.dim = (i === 0 ? fT > 0 : fT >= 1) ? 1 : .45; b.obj.material.color.set(COMP.colThem); });
+    const tagAt = (it, p, d, html, col) => { const [x, y] = outward(p[0], p[1], ex, ey, d); setText(it, `<span style="color:${col}">${html}</span>`); place(it, x, y, 'cm', faceRot(y)); };
+    tagAt(KD.tagU, pu, 15, `US · T+ ${fmtDur(fU * cmp.us.time, false)}`, hexCss(C.mint));
+    tagAt(KD.tagT, pt, -15, `TUG · T+ ${fmtDur(fT * cmp.them.time, false)}`, hexCss(COMP.colThem));
+    { const pa = [ex + S.rhoT * Math.cos(th0 + Math.PI + .5), ey - S.rhoT * Math.sin(th0 + Math.PI + .5)]; const tl = preset === 'geo' ? 'GEO' : preset === 'dro' ? 'DRO' : Math.round(rT - CGEO.R_E).toLocaleString('en-US') + ' km up'; tagAt(KD.lblTgt, pa, 13, `TARGET · ${tl}${preset === 'geo' ? ' · 35,786 km' : ''}`, '#f6f8f8'); }
+    { const mid = S.usPts[260]; tagAt(KD.lblU, [mid.x, -mid.y], 12, 'ELECTRIC SPIRAL', hexCss(C.mint)); const m2 = S.thAt(.5); tagAt(KD.lblT, m2, -4, 'HOHMANN TRANSFER', hexCss(COMP.colThem)); }
+    footNote(KD.foot, 'Not to scale. Spiral is a schematic.');
+    // rails: hero = propellant saved, then each side's delta-v, propellant and trip time
+    const saved = Math.round(cmp.saved), side = (nm, col, r) => `<div class="xf"><div class="eyebrow" style="color:${col}">${nm}</div><div class="xf-mets">`
+      + `<div class="metric"><div class="ml">DELTA-V</div><div class="mv">${num(r.dv)}<i>km/s</i></div></div>`
+      + `<div class="metric"><div class="ml">PROPELLANT</div><div class="mv" style="font-size:calc(var(--mm) * 24)">${Math.round(r.prop)}<i>kg</i></div></div>`
+      + `<div class="metric"><div class="ml">TRIP TIME</div><div class="mv">${fmtDur(r.time)}</div></div></div></div>`;
+    const dest = preset === 'geo' ? 'GEO' : preset === 'dro' ? 'DRO' : `${Math.round(rT - CGEO.R_E).toLocaleString('en-US')} KM`;
+    setRails('competitor', { raw: `<div class="r-left"><div class="eyebrow"><span class="sq"></span>${EYE}${dest}</div><div class="hero">${saved}<i>kg less propellant</i></div></div><div class="r-mid"></div>`
+      + `<div class="r-mets">${side(COMP.us.name, hexCss(C.mint), cmp.us)}${side(COMP.them.name, hexCss(COMP.colThem), cmp.them)}</div>` });
+  }
+
   // ================================================================ mode switching / main update
   let lastBox = undefined;
   const hintFirst = !!ctx.initialMode;
@@ -1423,7 +1630,33 @@ export function createModes(ctx) {
     if (!usable(name) || name === current) return;
     current = name; chromeKey = null; if (ctx.onModeChange) ctx.onModeChange(name);   // re-lay the chrome (labels hidden by a mode come back)
   }
-  const updFns = { mission: updMission, intercept: updIntercept, dvmap: updDv, engage: updEngage, orbits: updOrbits };
+  const updFns = { mission: updMission, intercept: updIntercept, dvmap: updDv, engage: updEngage, orbits: updOrbits, capture: updCapture, competitor: updCompetitor };
+  // presenter hooks (the tablet calls these through demo.html / the show state)
+  function setOpts(mode, o) {
+    if (!o || !OPT[mode]) return;
+    const cur = OPT[mode], prev = JSON.stringify(cur);
+    if (mode === 'capture') {
+      if (typeof o.scenario === 'string') {                      // 'capture' | 'defend' | 'phasing-up' | 'phasing-down' | 'transfer' (a combination: 'defend-phasing-up')
+        const s = o.scenario.toLowerCase();
+        cur.scenario = s.includes('defend') ? 'defend' : 'capture';
+        if (s.includes('transfer')) cur.path = 'transfer'; else if (s.includes('phasing')) cur.path = 'phasing';
+        if (s.includes('up')) cur.dir = 'up'; else if (s.includes('down')) cur.dir = 'down';
+      }
+      if (['auto', 'phasing', 'transfer'].includes(o.path)) cur.path = o.path;
+      if (['auto', 'up', 'down'].includes(o.dir)) cur.dir = o.dir;
+      if (o.speed > 5) cur.speed = Math.min(120, +o.speed);
+      if (o.sim != null) setMode(o.sim ? 'engage' : 'capture');  // advanced: the real engagement sim (tools/engage.sh, port 8791)
+    } else if (mode === 'competitor') {
+      if ('target' in o) cur.target = o.target;                  // 'geo' | 'dro' | <altitude km> | null (= by the Seldon piece)
+      if (o.speed > 5) cur.speed = Math.min(120, +o.speed);
+    }
+    if (JSON.stringify(cur) !== prev) { CP.reset = KP.reset = true; }
+  }
+  const resetFilm = () => { CP.reset = KP.reset = true; };
+  { const Q = new URLSearchParams(location.search);              // test hooks: ?scenario=defend|phasing-up|transfer  ?dir=up|down  ?target=geo|dro|<km>
+    const sc = Q.get('scenario'); if (sc) setOpts('capture', { scenario: sc });
+    if (Q.get('dir')) setOpts('capture', { dir: Q.get('dir') });
+    if (Q.get('target')) setOpts('competitor', { target: Q.get('target') }); }
 
   function update(pieces, dt, nowMs) {
     const P = {};
@@ -1439,7 +1672,7 @@ export function createModes(ctx) {
       setPts(b.fill, [W(t.cx, yForBudget(0)), W(t.cx, yb)]); b.fill.on = act && budgetS > .02;
       setText(b.read, `${budgetS.toFixed(1)}<i>km/s</i>`); place(b.read, t.cx + (END === 'right' ? -1 : 1) * (BOX / 2 + 20), yb, 'cm', boxRot); b.read.on = act;
       if (b.lbl.act !== act) { b.lbl.act = act; b.lbl.obj.classList.toggle('on', act); }
-      if (current === 'engage' || current === 'orbits') hide(b.line, ...b.ticks, ...b.tickL, b.fill, b.lbl, b.read);   // the map's budget slider is not part of this mode
+      if (current === 'engage' || current === 'orbits' || current === 'capture' || current === 'competitor') hide(b.line, ...b.ticks, ...b.tickL, b.fill, b.lbl, b.read);   // the map's budget slider is not part of this mode
     });
     updFloor(P, dt, nowMs);
     for (const l of flows) l.material.dashOffset = -3 * nowMs / 1000;   // dashes travel toward increasing point index at 3 mm/s
@@ -1473,7 +1706,7 @@ export function createModes(ctx) {
     for (const k of Object.keys(placerKeys)) placerKeys[k] = null;
   }
   applyFonts();
-  return { update, setMode, onLayout, get mode() { return current; }, boxRect, setTopo: v => { topo = !!v; }, get topo() { return topo; },
+  return { update, setMode, onLayout, setOpts, reset: resetFilm, get mode() { return current; }, boxRect, setTopo: v => { topo = !!v; }, get topo() { return topo; },
     setBudget: v => { budget = Math.max(0, Math.min(DV_MAX, +v)); }, get budget() { return budget; }, trackY: yForBudget, DV_MAX, engChips, get viewZoom() { return current === 'engage' ? (ENG.zoomNow ?? 1) : 1; }, get handMode() { return current === 'engage' || (current === 'orbits' && OR.zoomOn); }, orbitsDemo: (pc, noMoon) => orbitsDemo(pc, noMoon),
     orbitsFigures: () => ({ earth: OGEO.FIG.E, moon: OGEO.FIG.M, seldon: OGEO.FIG.S }),
     zoomHandPos: () => current === 'orbits' ? along(orbZoomTrack(), slT(OZF, OR.kmmm)) : along(zoomTrack(), slT(ZF, ENG.vals.s.zoom)),

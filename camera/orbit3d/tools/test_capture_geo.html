@@ -1,0 +1,8 @@
+<!doctype html><meta charset="utf-8"><title>capture-geo test</title>
+<!-- no node on the table's laptop: open this page (served from camera/orbit3d) and read the result; headless: msedge --headless=new --dump-dom <url> -->
+<body><pre id="o"></pre><script type="module">
+const o = document.getElementById('o');
+console.log = (...a) => { o.textContent += a.join(' ') + '\n'; };
+try { await import('./test_capture_geo.mjs'); } catch (e) { o.textContent += 'EXC ' + e + '\n' + e.stack; }
+o.textContent += 'DONE';
+</script></body>
