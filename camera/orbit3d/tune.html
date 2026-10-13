@@ -65,6 +65,17 @@ const GROUPS = [
     ['STILL_S', 'Lock-in time', 0.1, 5, 0.1, 's', 'How long a piece has to sit still before it locks in place (switches to the locked min move).'],
     ['REST_MM', 'Lock-in radius', 2, 50, 1, 'mm', 'A piece counts as sitting still while it stays within this distance of where it stopped. Moving it further unlocks it.'],
   ]],
+  ['Deliberate moves and hands', [
+    ['UNLOCK_FRAMES', 'Frames to unlock', 1, 12, 1, 'frames', 'A locked piece only starts moving when the detection stays away from it for this many frames, so a single bad frame can never nudge it. Higher = steadier, slower to react.'],
+    ['UNLOCK_S', 'Time to unlock', 0, 1, 0.05, 's', 'Same, in seconds: the detection must also stay away at least this long.'],
+    ['HAND_NEAR_MM', 'Hand guard radius', 0, 300, 5, 'mm', 'A locked piece with a hand or arm outline this close does not follow detections (waving a hand over it does not move it). 0 = off.'],
+    ['HAND_PUSH_MM', 'Hand carry distance', 5, 150, 5, 'mm', 'Next to a hand, a piece only follows a detection that has moved this far from where it sat...'],
+    ['HAND_PUSH_S', 'Hand carry time', 0, 2, 0.05, 's', '...and has stayed moved this long (with at least the frames below),'],
+    ['HAND_PUSH_FRAMES', 'Hand carry frames', 1, 20, 1, 'frames', 'Frames of that carry before a piece next to a hand follows (4 at 18 fps is about a quarter second).'],
+    ['HAND_HOLD_MM', 'Hand holds it within', 0, 100, 1, 'mm', '...and the hand outline touches it (is this close to the piece): someone carrying it. After the hand leaves, the piece settles where it is seen.'],
+    ['HAND_CAND_MM', 'New piece near hand', 0, 200, 5, 'mm', 'A new piece, or a piece that reappears elsewhere, this close to a hand outline has to be seen for the time below first (a hand called a piece flickers; a carried piece stays). 0 = off.'],
+    ['HAND_RELOC_S', 'Time near hand', 0.1, 3, 0.05, 's', 'How long such a detection must persist before it is accepted. Once the hand has left, the usual few frames are enough.'],
+  ]],
   ['Smoothing', [
     ['SMOOTH', 'Detection smoothing', 0.05, 1, 0.01, '', 'Weight of each new detection (EMA). Lower = steadier but laggier; 1 = raw detections.'],
     ['page_tau_s', 'Screen easing (still)', 0, 1.5, 0.01, 's', 'Time constant the table page eases a still piece toward the feed. Higher = calmer.'],

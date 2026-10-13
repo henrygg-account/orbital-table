@@ -15,11 +15,22 @@ The detector is treated as a noisy sensor; the tracker decides what is true, und
      only for WEAK_S after their last confident one (a phantom on the screen's own glow fades out). Earth (blue) is never
      placed on colour alone: the screen glows blue through the film.
   7. Size: a box far bigger or smaller than the piece can be (a hand, an arm, a reflection) is ignored.
+  8. A hand near a still piece does not move it (Oct 12). A locked piece ignores detections that drift off it while a
+     hand outline is within HAND_NEAR_MM; it only follows when the detection has moved HAND_PUSH_MM, held there for
+     HAND_PUSH_S, with the hand actually on it (the outline within HAND_HOLD_MM): someone carrying it. New pieces and
+     relocations within HAND_CAND_MM of a hand must be seen HAND_RELOC_S, not CONFIRM_FRAMES (a hand called Seldon
+     flickers; a carried piece persists), and are accepted at once when the hand has left, so a piece that was picked
+     up and put down settles where it is seen once the hand is gone.
+  9. A locked piece unlocks only for a deliberate move: the detection must stay beyond BAND_STILL_MM of where the piece is
+     published for UNLOCK_FRAMES frames and UNLOCK_S, so a one-frame outlier can't start a wobble. Matching keeps using
+     the raw detection (ex, ey); only what is published (sx, sy: smoothed, SMOOTH) is held back.
 Published positions keep the stillness lock (deadband) of the earlier tracker; demo.html eases toward them.
-Interface used by live.py and replay.py: step(dets, now), feed(now). Every knob is a class attribute (tune.html).
+Interface used by live.py and replay.py: step(dets, now, hands=None), feed(now). hands: person outlines as Nx2 polygons in
+screen mm. Every knob is a class attribute (tune.html).
 """
 import time
 
+import cv2
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
@@ -54,14 +65,26 @@ class Tracker:
     LOG = None              # path: every placement / relocation is appended here (what put a piece where, Oct 9)
     SIZE_MIN_MM, SIZE_MAX_MM = 15.0, 170.0   # box diagonal on the screen plane
     # publishing (stillness lock, as before)
-    SMOOTH = 1.0
-    BAND_MOVING_MM = 0.0
-    BAND_STILL_MM = 5.0
-    STILL_S = 1.0
+    SMOOTH = 0.6            # Oct 12: was 1.0 (raw)
+    BAND_MOVING_MM = 1.0    # was 0
+    BAND_STILL_MM = 8.0     # was 5
+    STILL_S = 0.8           # was 1.0: locks sooner
     REST_MM = 15.0
+    UNLOCK_FRAMES = 2       # a locked piece follows a detection beyond REST_MM only after this many frames...
+    UNLOCK_S = 0.05         # ...and this long, all in one place (CONFIRM_MM)
+    # hands (person outlines, screen mm)
+    HAND_NEAR_MM = 90.0     # a locked piece with a hand outline this close ignores drifting detections...
+    HAND_PUSH_MM = 25.0     # ...unless the detection is this far from where the piece locked,
+    HAND_PUSH_S = 0.3       # ...has stayed there this long (and HAND_PUSH_FRAMES frames),
+    HAND_PUSH_FRAMES = 3
+    HAND_HOLD_MM = 50.0     # ...and a hand outline is this close to it (holding it)
+    HAND_CAND_MM = 60.0     # new / relocated pieces this close to a hand outline need to be seen HAND_RELOC_S, not just a few frames
+    HAND_RELOC_S = 0.7
+    HAND_MEMORY_S = 0.5     # an outline stays valid this long after the model last saw it (it flickers)
 
     def __init__(self, cfg):
         self.cfg = cfg
+        self.hands = []     # [(time, contour)]
         self.W, self.H = cfg['screen_mm']
         self.pieces = {}    # id -> track dict
         self.cand = {}      # role -> {x, y, n, t, d}
@@ -107,9 +130,33 @@ class Tracker:
     def near_edge(self, x, y):
         return min(x, self.W - x, y, self.H - y) < self.EDGE_MM
 
+    # ------------------------------------------------------------ hands
+    def hand_dist(self, x, y):
+        """Distance (mm) from a point to the nearest remembered hand outline; negative inside it; inf with no hand."""
+        best = np.inf
+        for _, c, (x0, y0, x1, y1) in self.hands:
+            if best > 0 and (x0 - best > x or x > x1 + best or y0 - best > y or y > y1 + best):
+                continue                                         # farther than the best so far: skip the exact test
+            best = min(best, -cv2.pointPolygonTest(c, (float(x), float(y)), True))
+        return best
+
+    def hand_near(self, x, y, within):
+        return within > 0 and self.hand_dist(x, y) < within
+
+    def _remember_hands(self, hands, now):
+        fresh = []
+        for poly in hands or ():
+            a = np.asarray(poly, np.float32).reshape(-1, 2)
+            if len(a) >= 3:
+                fresh.append((now, a.reshape(-1, 1, 2), (*a.min(0), *a.max(0))))
+        # outlines flicker: when the model sees none this frame, the last ones stay for a moment; any seen replace them
+        self.hands = fresh or [h for h in self.hands if now - h[0] <= self.HAND_MEMORY_S]
+
     # ------------------------------------------------------------ one frame
-    def step(self, dets, now):
-        """dets: [{role, x_mm, y_mm, u, v, conf, colour?, size_mm?}] for one frame (already on-screen)."""
+    def step(self, dets, now, hands=None):
+        """dets: [{role, x_mm, y_mm, u, v, conf, colour?, size_mm?}] for one frame (already on-screen).
+        hands: person outlines this frame, Nx2 polygons in screen mm (None: no hand information)."""
+        self._remember_hands(hands, now)
         dets = [self.colour_fix(d) for d in dets if d['role'] in self.cfg['roles'] and self.size_ok(d)]
         dets = [{**d, 'conf': d['conf'] * 0.5} if self.colourless(d) else d for d in dets]
         dets = [d for d in dets if d['conf'] >= self.CONF_TRACK]
@@ -146,12 +193,15 @@ class Tracker:
             if d['role'] not in best or d['conf'] > best[d['role']]['conf']:
                 best[d['role']] = d
         for role, d in best.items():
+            # on or next to a hand: a hand called a piece, or a piece still being carried. Only a detection that keeps
+            # following the hand for HAND_RELOC_S counts (the chain tolerates a hand's speed), and then it is accepted.
+            hc = self.hand_near(d['x_mm'], d['y_mm'], self.HAND_CAND_MM)
             c = self.cand.get(role)
-            if c and np.hypot(d['x_mm'] - c['x'], d['y_mm'] - c['y']) < self.CONFIRM_MM and now - c['t'] < 0.3:
+            if c and np.hypot(d['x_mm'] - c['x'], d['y_mm'] - c['y']) < self.CONFIRM_MM * (2 if hc else 1) and now - c['t'] < 0.3:
                 c.update(x=d['x_mm'], y=d['y_mm'], n=c['n'] + 1, t=now, d=d)
             else:
-                c = self.cand[role] = {'x': d['x_mm'], 'y': d['y_mm'], 'n': 1, 't': now, 'd': d}
-            if c['n'] < self.CONFIRM_FRAMES:
+                c = self.cand[role] = {'x': d['x_mm'], 'y': d['y_mm'], 'n': 1, 't': now, 't0': now, 'd': d}
+            if c['n'] < self.CONFIRM_FRAMES or (hc and now - c['t0'] < self.HAND_RELOC_S):
                 continue
             ids_r = self.ids_for(role)
             free = [i for i in ids_r if i not in self.pieces]
@@ -179,7 +229,7 @@ class Tracker:
                             f"conf {d['conf']:.2f} size {d.get('size_mm') or 0:.0f} mm colour {d.get('colour')}\n")
             except OSError:
                 pass
-        self.pieces[i] = {'role': role, 'x_mm': x, 'y_mm': y, 'ex': x, 'ey': y, 'vx': 0.0, 'vy': 0.0, 'rest': (x, y, now),
+        self.pieces[i] = {'role': role, 'x_mm': x, 'y_mm': y, 'ex': x, 'ey': y, 'sx': x, 'sy': y, 'vx': 0.0, 'vy': 0.0, 'rest': (x, y, now),
                           'u': d['u'], 'v': d['v'], 'conf': d['conf'], 't': now, 'strong_t': now}
 
     def _observe(self, i, d, now):
@@ -188,15 +238,37 @@ class Tracker:
         zx, zy = d['x_mm'], d['y_mm']
         p['vx'] = 0.6 * p['vx'] + 0.4 * (zx - p['ex']) / dt
         p['vy'] = 0.6 * p['vy'] + 0.4 * (zy - p['ey']) / dt
-        ex = p['ex'] + self.SMOOTH * (zx - p['ex'])
-        ey = p['ey'] + self.SMOOTH * (zy - p['ey'])
+        rest = p['rest']
+        if now - rest[2] > self.STILL_S and np.hypot(zx - p["x_mm"], zy - p["y_mm"]) > self.BAND_STILL_MM:
+            # locked, and the detection is away from where the piece sits: a deliberate move, or a hand, or noise
+            e = p.get('exc')
+            if e and now - e['t'] < 0.3 and np.hypot(zx - e['x'], zy - e['y']) < self.CONFIRM_MM + 0.5 * self.VMAX_MM_S * (now - e['t']):
+                e.update(x=zx, y=zy, n=e['n'] + 1, t=now)
+            else:
+                e = p['exc'] = {'x': zx, 'y': zy, 'n': 1, 't0': now, 't': now}
+            if self.hand_near(p['x_mm'], p['y_mm'], self.HAND_NEAR_MM) or self.hand_near(zx, zy, self.HAND_NEAR_MM):
+                carried = (np.hypot(zx - p["x_mm"], zy - p["y_mm"]) >= self.HAND_PUSH_MM and e['n'] >= self.HAND_PUSH_FRAMES
+                           and now - e['t0'] >= self.HAND_PUSH_S and self.hand_dist(zx, zy) <= self.HAND_HOLD_MM)
+                ok = carried
+            else:
+                ok = e['n'] >= self.UNLOCK_FRAMES and now - e['t0'] >= self.UNLOCK_S
+            if not ok:                                           # seen and followed (so matching still works), but not published
+                p.update(ex=zx, ey=zy, u=d['u'], v=d['v'], conf=d['conf'], t=now)
+                if d['conf'] >= self.CONF_NEW:
+                    p['strong_t'] = now
+                return
+            p['sx'], p['sy'] = zx, zy                            # accepted: jump to it, unlocked from here on
+        p.pop('exc', None)
+        k = 1.0 if np.hypot(zx - p['sx'], zy - p['sy']) > 2 * self.BAND_STILL_MM else self.SMOOTH   # smooth jitter, not real moves
+        ex = p['sx'] + k * (zx - p['sx'])                        # what is published is smoothed; matching uses the raw ex, ey
+        ey = p['sy'] + k * (zy - p['sy'])
         ax, ay, rest = p['x_mm'], p['y_mm'], p['rest']
         if np.hypot(ex - rest[0], ey - rest[1]) > self.REST_MM:
             rest = (ex, ey, now)                                 # it's moving
         band = self.BAND_STILL_MM if now - rest[2] > self.STILL_S else self.BAND_MOVING_MM
         if np.hypot(ex - ax, ey - ay) > band:
             ax, ay = ex, ey
-        p.update(x_mm=ax, y_mm=ay, ex=ex, ey=ey, rest=rest, u=d['u'], v=d['v'], conf=d['conf'], t=now)
+        p.update(x_mm=ax, y_mm=ay, ex=zx, ey=zy, sx=ex, sy=ey, rest=rest, u=d['u'], v=d['v'], conf=d['conf'], t=now)
         if d['conf'] >= self.CONF_NEW:
             p['strong_t'] = now
 

@@ -114,6 +114,17 @@ def fingertips(polys, H, screen_mm):
     return out
 
 
+def polys_to_mm(polys, H, tol=3.0):
+    """Person outlines (camera px polygons) -> simplified polygons on the screen plane (mm), for the tracker's hand gate."""
+    out = []
+    for poly in polys:
+        if poly is None or len(poly) < 3:
+            continue
+        mm = cv2.perspectiveTransform(np.float32(poly).reshape(-1, 1, 2), np.asarray(H, np.float64))
+        out.append(cv2.approxPolyDP(mm, tol, True).reshape(-1, 2))
+    return out
+
+
 def to_screen(u, v, frame_wh, cfg, role, H=None):
     """u, v: 0-1 camera-frame position -> (x_mm, y_mm). Uncalibrated: u*W, v*H, no parallax."""
     W, Hh = cfg['screen_mm']
@@ -229,8 +240,10 @@ class Tracker:
 # Jitter vs. responsiveness knobs, changed while running via GET/POST /tuning and kept in tuning.json:
 # the Tracker constants above, the detector's confidence threshold, and the pages' easing time (sent in /events).
 TRACKER_KNOBS = ('SMOOTH', 'BAND_MOVING_MM', 'BAND_STILL_MM', 'STILL_S', 'REST_MM',      # tracker.py
-                 'GATE_MM', 'VMAX_MM_S', 'ROLE_PENALTY_MM', 'CONF_NEW', 'CONFIRM_FRAMES', 'RELOCATE_S', 'EDGE_MM', 'LEAVE_S', 'HOLD_S')
-PAGE_TAU_S = 0.24        # demo.html eases each still piece toward the feed with this time constant...
+                 'GATE_MM', 'VMAX_MM_S', 'ROLE_PENALTY_MM', 'CONF_NEW', 'CONFIRM_FRAMES', 'RELOCATE_S', 'EDGE_MM', 'LEAVE_S', 'HOLD_S',
+                 'UNLOCK_FRAMES', 'UNLOCK_S', 'HAND_NEAR_MM', 'HAND_PUSH_MM', 'HAND_PUSH_S', 'HAND_PUSH_FRAMES', 'HAND_HOLD_MM', 'HAND_RELOC_S',
+                 'HAND_CAND_MM')
+PAGE_TAU_S = 0.35        # demo.html eases each still piece toward the feed with this time constant...
 PAGE_TAU_MOVE_S = 0.6    # ...and a moving one with this (tune.html, Oct 9)
 PAGE_LEAD_S = 0.6        # a moving piece is drawn this far ahead along its velocity (tune.html, Oct 9; cancels the moving easing's lag)
 PAGE_KNOBS = {'page_tau_s': PAGE_TAU_S, 'page_tau_move_s': PAGE_TAU_MOVE_S, 'page_lead_s': PAGE_LEAD_S}
@@ -966,8 +979,9 @@ def main():
         now = time.time()
         state['hands'] = fingertips(people, Hm, cfg['screen_mm']) if Hm is not None and people else []
         kept = []
+        hand_polys = polys_to_mm(people, Hm) if Hm is not None and people else []   # the tracker keeps still pieces still near these
         with lock:
-            trk.step([d for dets in per_role.values() for d in dets], now)
+            trk.step([d for dets in per_role.values() for d in dets], now, hand_polys)
             kept = [(d['role'], d['role'], d) for dets in per_role.values() for d in dets]   # preview: every on-screen detection
             if state['hands'] or state['pending'] is not None or any(p['moving'] for p in trk.feed(now).values()):
                 busy_t = now                                        # a hand over the screen, a moving piece or a calibration: full speed
