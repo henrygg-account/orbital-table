@@ -123,6 +123,7 @@ live.SHOW_JSON = live.Path(tempfile.mkdtemp()) / 'show.json'
 assert live.show_get()['mode'] == 'geo' and live.show_get()['reset'] == 0
 s = live.show_update({'mode': 'dro', 'scale': 'true', 'sky': 'bogus', 'freeze': 'yes', 'mode_opts': {'competitor': {'alt': 'GEO'}}})
 assert s['mode'] == 'dro' and s['scale'] == 'true' and s['sky'] == 'still' and s['freeze'] is False   # bad values ignored
+live.show_update({'beat': 3}); live.show_update({'beat': -1}); live.show_update({'beat': 'x'}); assert live.show_get()['beat'] == 3
 live.show_update({'mode_opts': {'competitor': {'x': 1}}, 'freeze': True, 'reset': True})
 s = live.show_get(); assert s['mode_opts']['competitor'] == {'alt': 'GEO', 'x': 1} and s['freeze'] and s['reset'] == 1
 live.show.update(json.loads(json.dumps(live.SHOW_DEFAULT))); live.show_load()                      # "restart"
