@@ -865,7 +865,10 @@ IDLE_AFTER_S = 1.5       # nothing moved and no hand seen for this long -> the m
 
 def main():
     ap = argparse.ArgumentParser()
-    run = HERE / 'runs/r4-seg-yolo11s-960/weights'          # round 4: + Moon + person, outlines (Oct 9)
+    fast = 'best.onnx' if sys.platform == 'win32' else 'best.mlpackage'
+    run = HERE / 'runs/r5-seg-yolo11s-960/weights'          # round 5: + the Oct 12 table (sky page, evening light, hands; Oct 13)
+    if not (run / fast).exists():                            # (until it is exported for this laptop: export.py --weights .../best.pt)
+        run = HERE / 'runs/r4-seg-yolo11s-960/weights'      # round 4: + Moon + person, outlines (Oct 9)
     for older in ('tv-pol-yolo11s-960', 'tv-sam-yolo11s-960'):   # round 3 (polarized), round 2 (SAM 2 labels)
         if not run.exists():
             run = HERE / 'runs' / older / 'weights'
