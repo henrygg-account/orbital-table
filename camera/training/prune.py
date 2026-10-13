@@ -83,8 +83,10 @@ def main():
     files = [Path(p) for p in (a.files or sorted(glob.glob(str(HERE / 'videos' / 'rec_*.mp4')) + glob.glob(str(HERE / 'videos' / 'rec_*.avi'))))]
     tot_n = tot_k = 0
     for p in files:
-        if p.name == busy or p.name.endswith('.pruning.avi') or p.with_suffix('.steps.json').exists():
-            print(f'{p.name}: skipped' + (' (being recorded)' if p.name == busy else ''))
+        side = p.with_suffix('.json')
+        done = side.exists() and json.loads(side.read_text()).get('pruned')   # a second pass would only re-encode it
+        if p.name == busy or p.name.endswith('.pruning.avi') or p.with_suffix('.steps.json').exists() or done:
+            print(f'{p.name}: skipped' + (' (being recorded)' if p.name == busy else ' (already pruned)' if done else ''))
             continue
         n, k, what = prune(p)
         tot_n += n; tot_k += k
