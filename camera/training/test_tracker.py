@@ -1,3 +1,4 @@
+import numpy as np
 """test_tracker.py — the rules in tracker.py, one synthetic scene each. Run: .venv/bin/python test_tracker.py"""
 from tracker import Tracker
 
@@ -163,6 +164,12 @@ t = run(T, [[sz(det('seldon-1', 600 + 5 * k, 400), 150), det('seldon-2', 820, 40
 check('...but a full-size view that moves is followed', pos(T, 'seldon-1')[0] > 700)
 t = run(T, [[sz(det('seldon-1', 750 + 5 * k, 400), 80), det('seldon-2', 1100, 400), det('earth', 300, 400)] for k in range(20)], t)
 check('...and once it is moving, partial views of it are followed too (a hand covering it while carrying)', pos(T, 'seldon-1')[0] > 820)
+T, t = placed()                                                          # carried by one end: the box is the other half, off centre
+t = run(T, [[sz(det('seldon-1', 600, 400), 150), det('seldon-2', 720, 900 - 400), det('earth', 300, 400)]] * (2 * FPS), t)
+fr = lambda xt: ([sz(det('seldon-1', xt - 35, 400), 80), det('seldon-2', 720, 500), det('earth', 300, 400)], [box(xt + 50, 400, 60, 60)])
+t = run_h(T, [fr(600 + 12 * k) for k in range(25)], t)
+xt = 600 + 12 * 24
+check('a Seldon held by one end is drawn at its centre, not the visible half (within 12 mm)', np.hypot(pos(T, 'seldon-1')[0] - xt, pos(T, 'seldon-1')[1] - 400) < 12)
 
 T, t = settled()                                                         # picked up, hand holds it, put down 300 mm away
 t = run_h(T, [(others, [box(600, 400)])] * 6, t)                          # covered by the hand

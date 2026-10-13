@@ -151,6 +151,17 @@ class Tracker:
             best = min(best, -cv2.pointPolygonTest(c, (float(x), float(y)), True))
         return best
 
+    def hand_point(self, x, y):
+        """The nearest point on the nearest remembered hand outline (on its edges, not just its corners), or None."""
+        best, bp = np.inf, None
+        for _, c, _ in self.hands:
+            a = c.reshape(-1, 2).astype(np.float64); e = np.roll(a, -1, 0) - a
+            u = np.clip(((x - a[:, 0]) * e[:, 0] + (y - a[:, 1]) * e[:, 1]) / np.maximum((e ** 2).sum(1), 1e-9), 0, 1)
+            q = a + u[:, None] * e; d = np.hypot(q[:, 0] - x, q[:, 1] - y); i = int(d.argmin())
+            if d[i] < best:
+                best, bp = d[i], (float(q[i, 0]), float(q[i, 1]))
+        return bp
+
     def hand_near(self, x, y, within):
         return within > 0 and self.hand_dist(x, y) < within
 
@@ -251,6 +262,12 @@ class Tracker:
         if s:
             if d['conf'] >= 0.5 and not self.hand_near(zx, zy, self.HAND_NEAR_MM):   # full size: up quickly, down very slowly
                 p['full'] = s if full is None else full + (0.2 if s > full else 0.02) * (s - full)
+            if full and s < self.PARTIAL_FRAC * full:            # partly covered by a hand (holding it, or over it): the box is the
+                hp = self.hand_point(zx, zy)                     # visible part, so its centre is off the piece's centre, away from
+                if hp is not None:                               # the hand. Put it back: toward the hand by half the missing size.
+                    dx, dy = hp[0] - zx, hp[1] - zy; dh = np.hypot(dx, dy)
+                    if 0 < dh < full:
+                        k = min((full - s) / 2, dh) / dh; zx, zy = zx + k * dx, zy + k * dy
             in_motion = now - p.get('carry_t', -1e9) < self.CARRY_HOLD_S or now - p['rest'][2] < 0.3   # (a partial view can't start a
             if not in_motion and full and s < self.PARTIAL_FRAC * full and np.hypot(zx - p['x_mm'], zy - p['y_mm']) < self.OCCLUDE_FRAC * full:   # move; once moving, it is followed)
                 p.update(u=d['u'], v=d['v'], conf=d['conf'], t=now)   # partly covered: seen where it is, not moved
