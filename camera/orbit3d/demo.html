@@ -387,7 +387,7 @@ addEventListener('pointerdown', e => {
   if (calibrating) return;
   const [x, y] = fromPx(e.clientX, e.clientY);
   let best = null, bd = 70;
-  for (const [k, p] of Object.entries(smooth)) { if (k === 'hand' && !modes.handMode) continue; const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = k; } }   // the hand only while its slider shows
+  for (const [k, p] of Object.entries(smooth)) { if (k === 'hand' && !modes.handMode) continue; if (modes.trueScale && (k === 'earth' || k === 'moon')) continue; const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = k; } }   // the hand only while its slider shows
   drag = best;
 });
 addEventListener('pointermove', e => { if (drag) { const [x, y] = fromPx(e.clientX, e.clientY); Object.assign(pieces[drag], { x_mm: x, y_mm: y }); } });
@@ -561,12 +561,13 @@ modes = createModes({
   initialMode: Q.get('mode') || undefined, missionUrl: Q.get('mission') || undefined,
   engageUrl: Q.get('engage') || undefined, engageScenario: Q.get('scenario') || undefined, engageScale: Q.get('kmpermm') ? +Q.get('kmpermm') : undefined, engageStart: Q.get('engt') || undefined,
 });
+if (Q.get('scale') === 'true') modes.setScale('true');   // test hook: true scale from the start (the presenter's button does it live)
 { const b = modes.boxRect(Q.get('chip') != null ? +Q.get('chip') : 0); pieces.chip = { x_mm: b.cx, y_mm: b.cy, seen_ago: 0 }; }
 // engagement mode: Earth sits at the table centre and the Moon is set aside (demo stand-ins; on the real table, move the pieces).
 // Both engagement and orbits put the demo hand on the zoom slider and take the chip away (no delta-v map).
 let parked = null; const slParked = {}, lifted = {};
 function engagePieces() {
-  const eng = modes.mode === 'engage', orb = modes.mode === 'orbits';
+  const eng = modes.mode === 'engage', orb = modes.orbitsLike, gd = orb && modes.mode !== 'orbits';
   if (parked) {   // undo the previous mode's stand-ins (Earth / Moon only if that mode moved them)
     if (parked.earth) pieces.earth = parked.earth; if (parked.moon) pieces.moon = parked.moon; if (parked.chip) pieces.chip = parked.chip; parked = null;
     if (pieces.hand) { slParked.hand = pieces.hand; delete pieces.hand; }
@@ -577,6 +578,11 @@ function engagePieces() {
   if (eng) {
     pieces.earth = { x_mm: SW / 2, y_mm: SH / 2, seen_ago: 0 }; delete pieces.moon;
     const h = modes.zoomHandPos(); pieces.hand = { x_mm: h.x, y_mm: h.y, seen_ago: 0 };   // demo hand, resting on the zoom slider at the current zoom
+  } else if (gd) {   // LEO TO GEO / LEO TO DRO: stand-ins for what the URL did not place (null = take that piece away)
+    if (!liveView()) {
+      const given = [['s1', 'seldon-1'], ['s2', 'seldon-2'], ['earth', 'earth'], ['moon', 'moon']].filter(([q]) => Q.has(q)).map(([q]) => q);
+      for (const [k, p] of Object.entries(modes.gdDemo(modes.mode, pieces, given))) if (p) pieces[k] = p; else delete pieces[k];
+    }
   } else if (!liveView()) {
     Object.assign(pieces, modes.orbitsDemo(pieces, Q.has('nomoon')));   // demo stand-ins: Seldons in LEO and in lunar orbit (true scale: Earth and Moon 970 mm apart)
     const h = modes.zoomHandPos(); pieces.hand = { x_mm: h.x, y_mm: h.y, seen_ago: 0 };   // demo hand for the zoom slider (shown while Earth or the Moon is off the table)
@@ -662,12 +668,12 @@ function tick(now) {
   updateSky(smooth.earth, smooth.moon, dt, now);
 
   // orbits view: figures bigger than scale (sizes from orbits-geo.js FIG; the lowest orbits hug their edges), Seldons smaller than the old 150 mm, no base rings
-  const fig = modes.mode === 'orbits' && modes.orbitsFigures();
+  const fig = modes.orbitsLike && modes.orbitsFigures(), TS = modes.trueScale && modes.mode !== 'orbits';   // true scale: the modes draw Earth and the Moon, the stand-ins go
   models.earth.scale.setScalar(fig ? fig.earth / EARTH_SPHERE_R : 1); models.moon.scale.setScalar(fig ? fig.moon / MOON_SPHERE_R : 1);
   for (const id of SATS) if (models[id]) models[id].scale.setScalar(fig ? ORB_SELDON_SCALE : SELDON_SCALE);
-  for (const [k, r] of Object.entries(baseRings)) { const P = smooth[k]; r.visible = !!P && !fig; if (P) r.position.set(P.x, -P.y, 0); }
+  for (const [k, r] of Object.entries(baseRings)) { const P = smooth[k]; r.visible = !!P && !fig && !(TS && (k === 'earth' || k === 'moon')); if (P) r.position.set(P.x, -P.y, 0); }
   for (const [k, g] of Object.entries(models)) {   // live: the printed Earth and Seldons stand there, so no stand-ins under them
-    const P = smooth[k]; g.visible = !!P && !(liveView() && (k === 'earth' || k === 'moon' || SATS.includes(k))); if (!P) continue;   // live: the printed pieces stand there
+    const P = smooth[k]; g.visible = !!P && !(TS && (k === 'earth' || k === 'moon')) && !(liveView() && (k === 'earth' || k === 'moon' || SATS.includes(k))); if (!P) continue;   // live: the printed pieces stand there
     g.position.x = P.x; g.position.y = -P.y; g.rotation.z = g.userData.rot;
   }
   models.earth.userData.spin.rotation.y += dt * .08; models.earth.userData.clouds.rotation.y += dt * .1;
