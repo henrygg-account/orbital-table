@@ -2,196 +2,101 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Presenter</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0d0d">
+<title>Orbital Table</title>
 <link rel="stylesheet" href="gg-table.css">
 <style>
-  :root { --ours: #0ee3a6; --adv: #e2604f; --line: rgba(246,248,248,.14); --dim: #8a969a; }
+  /* The presenter's remote, for an iPhone held in one hand: the four modes, true scale and zoom. Served by live.py
+     (http://<laptop>:8780/presenter.html on the same Wi-Fi); everything posts to /show and the table follows. */
+  :root { --mint: #0ee3a6; --line: rgba(246,248,248,.14); --dim: #8a969a; --ink: #0d1113; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { margin: 0; background: #0a0d0d; color: #dde3e4; font-family: var(--font-display); font-weight: 400; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
-  body { padding: 12px 20px; max-width: 1180px; margin: 0 auto; height: 100vh; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
-  .eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); display: flex; align-items: center; gap: 10px; }
-  .eyebrow .sq { width: 8px; height: 8px; background: var(--ours); display: inline-block; }
-  .eyebrow .conn { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-  .eyebrow .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--gg-fog-400); }
-  .eyebrow .dot.on { background: var(--ours); }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; flex: 1; min-height: 0; }
-  .card { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; min-height: 0; display: flex; flex-direction: column; background: #0d1113; }
-  .card h2 { font-family: var(--font-mono); font-weight: 400; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; margin: 0 0 10px; color: var(--dim); }
-  .modes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-  button { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .14em; color: #dde3e4; cursor: pointer; border: 1px solid var(--line); background: rgba(246,248,248,.04); border-radius: 14px; }
+  html, body { margin: 0; height: 100%; background: #0a0d0d; color: #dde3e4; font-family: var(--font-display); font-weight: 400;
+    user-select: none; -webkit-user-select: none; touch-action: manipulation; overscroll-behavior: none; }
+  body { display: flex; flex-direction: column; gap: 14px; max-width: 520px; margin: 0 auto;
+    padding: calc(env(safe-area-inset-top) + 14px) calc(env(safe-area-inset-right) + 16px) calc(env(safe-area-inset-bottom) + 16px) calc(env(safe-area-inset-left) + 16px); }
+  .top { display: flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+  .top .sq { width: 8px; height: 8px; background: var(--mint); }
+  .top .conn { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #5c6b70; }
+  .dot.on { background: var(--mint); }
+  button { font: inherit; color: inherit; cursor: pointer; border: 1px solid var(--line); background: rgba(246,248,248,.04); }
   button:active { background: rgba(246,248,248,.14); }
-  .mode { height: 62px; font-size: 14px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 5px; }
-  .mode i { font-style: normal; font-size: 11px; color: var(--dim); }
-  .mode.on, .seg button.on { border-color: #f6f8f8; color: #f6f8f8; background: rgba(246,248,248,.12); }
-  .ctl { display: grid; gap: 8px; }
-  .seg { display: flex; gap: 8px; }
-  button:disabled { opacity: .3; cursor: default; }
-  .seg button { flex: 1; height: 52px; font-size: 13px; border-radius: 999px; padding: 0 10px; }
-  .big { height: 56px; font-size: 13px; width: 100%; border-radius: 999px; }
-  .big.frz.on { border-color: var(--adv); color: var(--adv); background: rgba(226,96,79,.12); }
-  .big.pp { height: 76px; font-size: 20px; } .ctl .big.pp { height: 76px; }
-  .big.pp.on { border-color: var(--ours); color: var(--ours); background: rgba(14,227,166,.12); }
-  .row { display: flex; gap: 12px; align-items: center; }
-  .lbl { font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin: 2px 0 8px; display: flex; justify-content: space-between; }
-  .lbl .v { color: #f6f8f8; font-family: var(--font-display); font-size: 16px; letter-spacing: 0; text-transform: none; }
-  .opt { margin-bottom: 8px; } .opt:last-child { margin-bottom: 0; }
-  input[type=range] { width: 100%; height: 44px; accent-color: #dde3e4; }
-  .opts { margin-top: 4px; }
-  .status { margin-top: 12px; border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; background: #0d1113; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 12px; }
-  .status .k { font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
-  .status .s { font-size: 19px; color: #f6f8f8; font-variant-numeric: tabular-nums; }
-  .status .s i { font-style: normal; font-size: 11px; color: var(--dim); margin-left: 3px; }
-  .foot { margin-top: 6px; font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; display: flex; gap: 20px; }
-  .foot a { color: var(--dim); text-decoration: none; padding: 8px 0; }
-  .ctl { gap: 6px; align-content: start; }
-  .ctl .seg button { height: 46px; } .ctl .big { height: 48px; }
-
-  /* run of show */
-  .grp { display: flex; flex-direction: column; gap: 4px; flex: 1; border-top: 2px solid var(--line); padding-top: 4px; min-width: 0; }
-  .grp.on { border-top-color: #f6f8f8; }
-  .grp .g { font-family: var(--font-mono); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); white-space: nowrap; overflow: hidden; }
-  .grp.on .g { color: #f6f8f8; }
-  .chips { display: flex; gap: 4px; }
-  .chip { flex: 1; height: 44px; padding: 0; font-size: 13px; letter-spacing: 0; border-radius: 10px; }
-  .chip.on { border-color: #f6f8f8; color: #f6f8f8; background: rgba(246,248,248,.14); }
-  .chip.done { color: var(--dim); }
-  .num { display: grid; grid-template-columns: 1fr; gap: 0; }
-  .num > div { padding: 6px 0; border-top: 1px solid var(--line); }
-  .num .k { font-family: var(--font-mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
-  .num .v { font-size: 18px; color: #f6f8f8; font-variant-numeric: tabular-nums; }
-  .num .s { font-size: 11px; color: var(--dim); }
-  .pane { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
-  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; grid-template-rows: 1.15fr 1fr; } .mode { height: 56px; font-size: 12px; } }
+  .modes { flex: 1; display: grid; grid-template-rows: repeat(4, 1fr); gap: 10px; min-height: 0; }
+  .mode { border-radius: 18px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 6px; padding: 0 22px; text-align: left; }
+  .mode b { font-weight: 500; font-size: 26px; letter-spacing: -.01em; color: #f6f8f8; }
+  .mode i { font-style: normal; font-family: var(--font-mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+  .mode.on { border-color: var(--mint); background: rgba(14,227,166,.10); }
+  .mode.on b { color: var(--mint); }
+  .row { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  .card { border: 1px solid var(--line); border-radius: 18px; padding: 14px 18px; background: var(--ink); }
+  .lbl { display: flex; justify-content: space-between; align-items: baseline; font-family: var(--font-mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); margin-bottom: 10px; }
+  .lbl .v { font-family: var(--font-display); font-size: 18px; letter-spacing: 0; text-transform: none; color: #f6f8f8; font-variant-numeric: tabular-nums; }
+  .toggle { width: 100%; height: 58px; border-radius: 999px; font-family: var(--font-mono); font-size: 14px; letter-spacing: .14em; text-transform: uppercase; }
+  .toggle.on { border-color: #f6f8f8; color: #0a0d0d; background: #f6f8f8; }
+  button:disabled, input:disabled { opacity: .3; }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 44px; background: transparent; margin: 0; }
+  input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: rgba(246,248,248,.18); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 34px; height: 34px; border-radius: 50%; background: #f6f8f8; margin-top: -14px; border: 0; }
+  input[type=range]::-moz-range-track { height: 6px; border-radius: 3px; background: rgba(246,248,248,.18); }
+  input[type=range]::-moz-range-thumb { width: 34px; height: 34px; border-radius: 50%; background: #f6f8f8; border: 0; }
+  .ends { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+  .note { font-size: 13px; color: var(--dim); min-height: 1.2em; }
 </style>
 </head>
 <body>
-<div class="eyebrow"><span class="sq"></span>General Galactic · Orbital table<span class="conn"><span class="dot" id="dot"></span><span id="conn">Connecting</span></span></div>
+<div class="top"><span class="sq"></span>Orbital table<span class="conn"><span class="dot" id="dot"></span><span id="conn">Connecting</span></span></div>
 <div class="modes" id="modes"></div>
-
-<div class="grid">
+<div class="row">
+  <button class="toggle" id="scale">True scale</button>
   <div class="card">
-    <div class="ctl">
-      <div id="playbox"><h2>Playback</h2><button class="big pp" id="pp">Pause</button><input type="range" id="scrub" min="0" max="1000" value="0" aria-label="Scrub the film"></div>
-      <div><h2>Scale</h2><div class="seg" id="scale"></div></div>
-      <div><h2>Table</h2><div class="row"><button class="big frz" id="freeze" style="flex:2">Freeze pieces</button><button class="big" id="reset" style="flex:1">Reset</button></div></div>
-      <div><h2>Sky</h2><div class="seg" id="sky"></div></div>
-    </div>
+    <div class="lbl"><span>Zoom</span><span class="v" id="zv">1.0×</span></div>
+    <input type="range" id="zoom" min="50" max="200" value="100" step="1" aria-label="Zoom">
+    <div class="ends"><span>Wide</span><span>Close</span></div>
   </div>
-  <div class="card">
-    <div class="opts"><h2 id="opts-h">Options</h2><div id="opts"></div></div>
-    <div class="status">
-      <div><div class="k">Table shows</div><div class="s" id="st-mode">-</div></div>
-      <div><div class="k">Scale</div><div class="s" id="st-scale">-</div></div>
-      <div><div class="k">Pieces</div><div class="s" id="st-frz">-</div></div>
-      <div><div class="k">Pieces seen</div><div class="s" id="st-pieces">-</div></div>
-      <div><div class="k">Detector</div><div class="s" id="st-fps">-</div></div>
-    </div>
-    <div class="foot"><a href="control.html" id="adv">Advanced: engagement sim control</a></div>
-  </div>
+  <div class="note" id="note"></div>
 </div>
-
 <script>
-// Everything here goes to live.py's /show (contract: NIGHT-AGENTS.md); the table (demo.html) applies it from the /events feed.
-// ?host=<ip:port> if this page is not served by live.py itself.
-const HOST = new URLSearchParams(location.search).get('host');
-const BASE = HOST ? `http://${HOST}` : '';
-const MODES = [['geo', 'LEO TO GEO'], ['capture', 'CAPTURE / DEFEND'], ['dro', 'LEO TO DRO'], ['competitor', 'COMPETITOR']];
-const SCALES = [['show', 'Show scale'], ['true', 'True scale']];
-const SKIES = [['still', 'Still'], ['slow', 'Slow'], ['off', 'Off']];
-
-// Per-mode options, rendered from this table. type: seg (choices [value, label]) | toggle | range (min, max, step, unit);
-// `when(opts)` hides a control. Values go to show.mode_opts[mode][id]; the modes read them in modes.setOpts(mode, opts).
-const OPTS = {
-  geo: [{ id: 'band_mm', label: 'Lock-to-GEO band', type: 'range', def: 40, min: 10, max: 120, step: 5, unit: 'mm' }],
-  capture: [
-    { id: 'scenario', label: 'Scenario', type: 'seg', def: 'capture', choices: [['capture', 'Capture'], ['defend', 'Defend'], ['phasing-up', 'Phasing up'], ['phasing-down', 'Phasing down'], ['transfer', 'Transfer']] },
-    { id: 'speed', label: 'Film length', type: 'range', def: 30, min: 10, max: 90, step: 5, unit: 's' },
-  ],
-  dro: [{ id: 'dro_km', label: 'DRO size', type: 'range', def: 36000, min: 5000, max: 60000, step: 1000, unit: 'km' }],
-  competitor: [
-    { id: 'target', label: 'Target', type: 'seg', def: 'auto', choices: [['auto', 'By Seldon'], ['geo', 'GEO'], ['dro', 'DRO'], ['altitude', 'Altitude']] },
-    { id: 'alt_km', label: 'Altitude', type: 'range', def: 20000, min: 500, max: 40000, step: 500, unit: 'km', when: o => o.target === 'altitude' },
-  ],
-};
-
-let show = { mode: 'geo', scale: 'show', freeze: false, sky: 'still', reset: 0, mode_opts: {}, beat: 0, play: true, t: null }, live = false, lastMsg = 0;
+const MODES = [['geo', 'LEO to GEO'], ['capture', 'Capture / Defend'], ['dro', 'LEO to DRO'], ['competitor', 'Competitor']];
+const TRUE_OK = ['geo', 'dro'], ZOOM_OK = ['geo', 'capture', 'competitor'];   // what the table supports in each mode
+const HOST = new URLSearchParams(location.search).get('host'), BASE = HOST ? `http://${HOST}` : '';   // ?host=ip:8780 if served elsewhere
 const $ = id => document.getElementById(id);
-let scrubbing = false;
-const FILM_MODES = ['geo', 'capture', 'dro', 'competitor'];   // all four have something to pause and scrub
-const titleOf = m => (MODES.find(x => x[0] === m) || [0, m])[1];
+let show = { mode: 'geo', scale: 'show', zoom: 1 }, lastMsg = 0, dragging = false;
 
-function seg(el, items, cur, onPick) {
-  el.innerHTML = '';
-  for (const [v, t] of items) { const b = document.createElement('button'); b.textContent = t; b.className = v === cur ? 'on' : ''; b.onclick = () => onPick(v); el.appendChild(b); }
-}
-function setShow(s) { if (typeof s.play !== 'boolean') s.play = show.play; show = s; render(); }   // (same for an old live.py without play / t)
-function post(patch) {   // optimistic: the buttons answer at once; the next /events message confirms
-  fetch(BASE + '/show', { method: 'POST', body: JSON.stringify(patch) }).then(r => r.json()).then(s => { setShow(s); }).catch(() => { $('conn').textContent = 'Not reaching live.py'; });
-  const { reset, mode_opts, ...now } = patch; show = { ...show, ...now }; render();
-}
-const opts = () => ({ ...Object.fromEntries((OPTS[show.mode] || []).map(c => [c.id, c.def])), ...(show.mode_opts[show.mode] || {}) });
-const setOpt = (id, v) => { show.mode_opts = { ...show.mode_opts, [show.mode]: { ...opts(), [id]: v } }; post({ mode_opts: { [show.mode]: { [id]: v } } }); };
-
-let dragging = false;
-function renderOpts() {
-  if (dragging) return;
-  const box = $('opts'), o = opts(), ctl = (OPTS[show.mode] || []).filter(c => !c.when || c.when(o));
-  $('opts-h').textContent = titleOf(show.mode) + ' options';
-  box.innerHTML = ctl.length ? '' : '<div class="none">No options for this mode.</div>';
-  for (const c of ctl) {
-    const d = document.createElement('div'); d.className = 'opt'; box.appendChild(d);
-    if (c.type === 'seg') { d.innerHTML = `<div class="lbl">${c.label}</div><div class="seg"></div>`; seg(d.lastChild, c.choices, o[c.id], v => setOpt(c.id, v)); }
-    else if (c.type === 'toggle') { d.innerHTML = `<div class="lbl">${c.label}</div><div class="seg"></div>`; seg(d.lastChild, [[true, 'On'], [false, 'Off']], !!o[c.id], v => setOpt(c.id, v)); }
-    else if (c.type === 'range') {
-      d.innerHTML = `<div class="lbl"><span>${c.label}</span><span class="v">${(+o[c.id]).toLocaleString()} ${c.unit || ''}</span></div><input type="range" min="${c.min}" max="${c.max}" step="${c.step}" value="${o[c.id]}">`;
-      const r = d.querySelector('input'), out = d.querySelector('.v');
-      r.oninput = () => { dragging = true; out.textContent = `${(+r.value).toLocaleString()} ${c.unit || ''}`; };
-      r.onchange = () => { dragging = false; setOpt(c.id, +r.value); };
-    }
-  }
-}
+const modesEl = $('modes');
+MODES.forEach(([m, t], i) => {
+  const b = document.createElement('button'); b.className = 'mode'; b.dataset.m = m;
+  b.innerHTML = `<i>${i + 1}</i><b>${t}</b>`; b.onclick = () => post({ mode: m }); modesEl.appendChild(b);
+});
 function render() {
-  seg($('modes'), MODES, show.mode, m => post({ mode: m }));
-  document.querySelectorAll('#modes button').forEach((b, i) => { b.className = 'mode' + (MODES[i][0] === show.mode ? ' on' : ''); b.innerHTML = `${MODES[i][1]}<i>${i + 1}</i>`; });
-  seg($('scale'), SCALES, show.scale, v => post({ scale: v }));
-  { const ok = show.mode === 'geo' || show.mode === 'dro'; for (const b of $('scale').children) b.disabled = !ok; $('scale').title = ok ? '' : 'True scale: LEO TO GEO and LEO TO DRO only'; }
-  seg($('sky'), SKIES, show.sky, v => post({ sky: v }));
-  $('pp').className = 'big pp' + (show.play ? '' : ' on'); $('pp').textContent = show.play ? 'Pause' : 'Play';
-  if (show.t != null && !scrubbing) $('scrub').value = Math.round(show.t * 1000);
-  $('scrub').disabled =!FILM_MODES.includes(show.mode); $('playbox').hidden = $('scrub').disabled;
-  $('freeze').className = 'big frz' + (show.freeze ? ' on' : ''); $('freeze').textContent = show.freeze ? 'Frozen: tap to release' : 'Freeze pieces';
-  renderOpts();
-  $('st-mode').textContent = titleOf(show.mode); $('st-scale').textContent = show.scale === 'true' && (show.mode === 'geo' || show.mode === 'dro') ? 'True' : 'Show';
-  $('st-frz').textContent = show.freeze ? 'Frozen' : 'Live'; $('st-frz').style.color = show.freeze ? 'var(--adv)' : '';
+  for (const b of modesEl.children) b.classList.toggle('on', b.dataset.m === show.mode);
+  const tOk = TRUE_OK.includes(show.mode), zOk = ZOOM_OK.includes(show.mode) && !(show.scale === 'true' && tOk);
+  const ts = $('scale'); ts.disabled = !tOk; ts.classList.toggle('on', show.scale === 'true' && tOk); ts.textContent = show.scale === 'true' && tOk ? 'True scale · on' : 'True scale';
+  const z = $('zoom'); z.disabled = !zOk; if (!dragging) z.value = Math.round((show.zoom || 1) * 100);
+  $('zv').textContent = `${(+z.value / 100).toFixed(1)}×`;
+  $('note').textContent = !tOk ? 'True scale: LEO to GEO and LEO to DRO only.' : show.scale === 'true' ? 'True scale: zoom is fixed.' : show.mode === 'dro' ? 'LEO to DRO: the Earth and Moon pieces set the scale.' : '';
 }
-
-$('freeze').onclick = () => post({ freeze: !show.freeze });
-// Pause holds the films and the dots where they are; the slider scrubs (it pauses first); Play goes on from the frame shown.
-$('pp').onclick = () => post(show.play ? { play: false } : { play: true, t: null });
-{ const s = $('scrub'); let last = 0, timer = 0;
-  s.onpointerdown = () => { scrubbing = true; }; addEventListener('pointerup', () => { scrubbing = false; });
-  const send = () => { clearTimeout(timer); timer = 0; last = Date.now(); post({ play: false, t: +s.value / 1000 }); };
-  s.oninput = () => { if (Date.now() - last >= 100) send(); else if (!timer) timer = setTimeout(send, 100 - (Date.now() - last)); };   // ~10 posts a second while dragging
-  s.onchange = send; }
-$('reset').onclick = () => post({ reset: true });
-if (HOST) $('adv').href = `http://${HOST}/control.html`;
+function post(patch) {   // optimistic: the phone answers at once; /events confirms
+  show = { ...show, ...patch }; render();
+  fetch(BASE + '/show', { method: 'POST', body: JSON.stringify(patch) }).then(r => r.json()).then(s => { if (!dragging) { show = s; render(); } })
+    .catch(() => { $('conn').textContent = 'Not reaching the table'; });
+}
+$('scale').onclick = () => post({ scale: show.scale === 'true' ? 'show' : 'true' });
+{ const z = $('zoom'); let last = 0, timer = 0;   // ~10 posts a second while dragging
+  const send = () => { clearTimeout(timer); timer = 0; last = Date.now(); post({ zoom: +z.value / 100 }); };
+  z.addEventListener('pointerdown', () => { dragging = true; }); z.addEventListener('touchstart', () => { dragging = true; }, { passive: true });
+  addEventListener('pointerup', () => { dragging = false; }); addEventListener('touchend', () => { dragging = false; });
+  z.oninput = () => { $('zv').textContent = `${(+z.value / 100).toFixed(1)}×`; if (Date.now() - last >= 100) send(); else if (!timer) timer = setTimeout(send, 100 - (Date.now() - last)); };
+  z.onchange = () => { dragging = false; send(); }; }
 
 function connect() {
   const es = new EventSource(BASE + '/events');
-  es.onmessage = e => {
-    const f = JSON.parse(e.data); lastMsg = Date.now();
-    if (f.show) { const sig = JSON.stringify(f.show); if (sig !== connect.sig) { connect.sig = sig; setShow(f.show); } }
-    const n = Object.keys(f.pieces || {}).length;
-    $('st-pieces').innerHTML = `${n}<i>${Object.keys(f.pieces || {}).map(k => k.replace('seldon-', 'S')).join(' ')}</i>`;
-    $('st-fps').innerHTML = `${f.fps}<i>fps${f.idle ? ' idle' : ''}${f.calibrated ? '' : ' uncalibrated'}</i>`;
-  };
-  es.onerror = () => { live = false; };
+  es.onmessage = e => { lastMsg = Date.now(); try { const f = JSON.parse(e.data); if (f.show && !dragging) { show = f.show; render(); } } catch {} };
+  es.onerror = () => {};
 }
-setInterval(() => {
-  live = Date.now() - lastMsg < 1500; $('dot').className = 'dot' + (live ? ' on' : ''); $('conn').textContent = live ? 'Connected to the table' : 'Not connected to live.py';
-  if (!live) { $('st-pieces').textContent = '-'; $('st-fps').textContent = '-'; }
-}, 500);
+setInterval(() => { const on = Date.now() - lastMsg < 1500; $('dot').className = 'dot' + (on ? ' on' : ''); $('conn').textContent = on ? 'Live' : 'Not connected'; }, 500);
 connect(); render();
 </script>
 </body>

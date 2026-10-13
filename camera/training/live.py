@@ -381,7 +381,8 @@ class CalibRequest:
 # The presenter's controls (presenter.html, or keys on the TV page): one object, broadcast in every /events message.
 # Kept in memory and in show.json (gitignored) so a restart of live.py keeps the mode. Contract: NIGHT-AGENTS.md.
 SHOW_JSON = HERE / 'show.json'
-SHOW_DEFAULT = {'mode': 'geo', 'scale': 'show', 'freeze': False, 'sky': 'still', 'reset': 0, 'mode_opts': {}, 'beat': 0, 'play': True, 't': None}   # beat: run-of-show position (presenter.html only; the table ignores it). play: false = films and dots hold; t: scrub position 0..1 (null = none)
+SHOW_DEFAULT = {'mode': 'geo', 'scale': 'show', 'freeze': False, 'sky': 'still', 'reset': 0, 'mode_opts': {}, 'beat': 0, 'play': True, 't': None, 'zoom': 1.0}   # beat: run-of-show position (presenter.html only; the table ignores it). play: false = films and dots hold; t: scrub position 0..1 (null = none); zoom: map scale about Earth (ZOOM_RANGE)
+ZOOM_RANGE = (0.5, 2.0)
 SHOW_CHOICES = {'mode': ('geo', 'capture', 'dro', 'competitor'), 'scale': ('show', 'true'), 'sky': ('still', 'slow', 'off')}
 show = json.loads(json.dumps(SHOW_DEFAULT))
 show_lock = threading.Lock()
@@ -408,6 +409,9 @@ def show_update(patch, save=True):
             show['play'] = patch['play']
         if 't' in patch and (patch['t'] is None or (type(patch['t']) in (int, float) and 0 <= patch['t'] <= 1)):
             show['t'] = patch['t']   # (NaN fails the range test)
+        z = patch.get('zoom')
+        if type(z) in (int, float) and ZOOM_RANGE[0] <= z <= ZOOM_RANGE[1]:
+            show['zoom'] = float(z)
         if isinstance(patch.get('freeze'), bool):
             show['freeze'] = patch['freeze']
         if type(patch.get('beat')) is int and 0 <= patch['beat'] < 100:

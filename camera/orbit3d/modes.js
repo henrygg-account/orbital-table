@@ -1471,7 +1471,7 @@ export function createModes(ctx) {
     const ids = ['seldon-1', 'seldon-2'].filter(id => P[id]).slice(0, geo ? 2 : 1);   // dro: one Seldon (Seldon-1 if both are seen)
     const msg = !E || (!geo && !Mo) ? msgFor(E, Mo, !geo) : !ids.length ? 'Place Seldon-1.' : '';
     if (!E || (!geo && !Mo)) { setRails(mode, { eyebrow: EYE, msg }); hide(OR.trG.et, OR.trG.etA, OR.trG.etC); OR.tr.xk = OR.tr.key = OR.trG.xk = OR.trG.key = null; return; }
-    const e = [E.x_mm, E.y_mm], maps = TS ? OGEO.makeTrueMaps(e, [Mo.x_mm, Mo.y_mm], { noZone: geo, foot: TRUE_FOOT }) : geo ? OGEO.makeGeoMaps(e) : OGEO.makeMaps(e, [Mo.x_mm, Mo.y_mm]);
+    const e = [E.x_mm, E.y_mm], maps = TS ? OGEO.makeTrueMaps(e, [Mo.x_mm, Mo.y_mm], { noZone: geo, foot: TRUE_FOOT }) : geo ? OGEO.makeGeoMaps(e, geoView()) : OGEO.makeMaps(e, [Mo.x_mm, Mo.y_mm]);
     pieceObs = ids.map(id => ({ x: P[id].x_mm, y: P[id].y_mm, r: PIECE_R[id] + TAG_GAP }));
     if (TS) {   // Earth and the Moon drawn at true relative size (the 3D stand-ins are hidden by the page)
       [[E, R_E, 0, 'EARTH'], [Mo, R_M, 1, 'MOON']].forEach(([c, R, i, name]) => {
@@ -1537,6 +1537,11 @@ export function createModes(ctx) {
         mets: [['FUEL', `${Math.round(et.mp)}<i>kg</i>`], ['TIME', fmtT(et.t)], alt] });
     } else setRails(mode, { eyebrow: `${EYE} · ${ids[0].toUpperCase()}`, hero: '0', unit: 'km/s delta-v', mets: [['STATUS', geo ? 'IN GEO' : 'IN THE DRO']] });
   }
+  // the presenter's zoom (show.zoom): the map's scale about Earth in LEO TO GEO, CAPTURE / DEFEND and COMPETITOR (LEO TO DRO is
+  // set by where Earth and the Moon stand; true scale is true). LEO never closer than 60 mm (the Earth piece + a Seldon's base).
+  let zoom = 1;
+  const geoView = () => ({ leoMm: Math.min(Math.max(60, OGEO.GEO_VIEW.leoMm * zoom), OGEO.GEO_VIEW.geoMm * zoom - 40), geoMm: OGEO.GEO_VIEW.geoMm * zoom });
+  function setZoom(z) { z = Math.max(.5, Math.min(2, +z || 1)); if (z === zoom) return; zoom = z; CGEO.setZoom(z); OR.tr.xk = OR.trG.xk = null; CP.key = KP.key = null; CP.S = KP.S = null; }
   function setScale(s) { scaleMode = s === 'true' ? 'true' : 'show'; OR.tr.xk = OR.trG.xk = null; }
   function setOptsOrbits(m, o = {}) {
     const num = (v, lo, hi) => Math.max(lo, Math.min(hi, +v));
@@ -1561,7 +1566,7 @@ export function createModes(ctx) {
       return out;
     }
     if (mode === 'geo') {
-      const e = TS ? fixedEM().earth : pc.earth && given.includes('earth') ? pc.earth : { x_mm: SW() / 2, y_mm: SH() / 2 }, maps = TS ? OGEO.makeTrueMaps([e.x_mm, e.y_mm], [fixedEM().moon.x_mm, e.y_mm], { noZone: true, foot: TRUE_FOOT }) : OGEO.makeGeoMaps([e.x_mm, e.y_mm]);
+      const e = TS ? fixedEM().earth : pc.earth && given.includes('earth') ? pc.earth : { x_mm: SW() / 2, y_mm: SH() / 2 }, maps = TS ? OGEO.makeTrueMaps([e.x_mm, e.y_mm], [fixedEM().moon.x_mm, e.y_mm], { noZone: true, foot: TRUE_FOOT }) : OGEO.makeGeoMaps([e.x_mm, e.y_mm], geoView());
       if (use('earth')) out.earth = { x_mm: e.x_mm, y_mm: e.y_mm, seen_ago: 0 };
       if (use('moon')) out.moon = null;                          // the Moon is not part of this mode
       if (use('s1')) out['seldon-1'] = at(maps.E, standAt(maps, OGEO.R_LEO) + (TS ? 4 : 0), 60);
@@ -1854,8 +1859,8 @@ export function createModes(ctx) {
   }
   applyFonts();
   return { update, setMode, onLayout, setOpts, reset: () => { reset(); resetFilm(); }, setPlay: on => { PL.paused = !on; }, seek: f => { PL.f = Math.max(0, Math.min(1, +f || 0)); PL.n++; }, get paused() { return PL.paused; },
-    get testState() { return { capture: CP.clk, competitor: KP.clk, geoDraw: OR.trG.draw, geoAng: OR.ang[0], lead: { capture: CAP_LEAD, competitor: CMP_LEAD }, speed: { capture: OPT.capture.speed, competitor: OPT.competitor.speed } }; }, /* test hook (tools/test_control.py): film clocks (s), the drawn-out transfer (0..1), the dot angle */ get mode() { return current; }, boxRect, setTopo: v => { topo = !!v; }, get topo() { return topo; },
-    setBudget: v => { budget = Math.max(0, Math.min(DV_MAX, +v)); }, get budget() { return budget; }, trackY: yForBudget, DV_MAX, engChips, get viewZoom() { return current === 'engage' ? (ENG.zoomNow ?? 1) : 1; }, get scale() { return scaleMode; }, get trueScale() { return scaleMode === 'true' && (current === 'geo' || current === 'dro'); },   /* true scale exists in LEO TO GEO / LEO TO DRO only; elsewhere the pieces stay live */ setScale, gdDemo, get orbitsLike() { return grp() === 'orbits' || current === 'capture' || current === 'competitor'; }, get drawsBodies() { return scaleMode === 'true' && (current === 'geo' || current === 'dro'); },
+    get testState() { return { capture: CP.clk, competitor: KP.clk, geoDraw: OR.trG.draw, geoAng: OR.ang[0], rho: { ...CGEO.RHO }, geoView: geoView(), lead: { capture: CAP_LEAD, competitor: CMP_LEAD }, speed: { capture: OPT.capture.speed, competitor: OPT.competitor.speed } }; }, /* test hook (tools/test_control.py): film clocks (s), the drawn-out transfer (0..1), the dot angle */ get mode() { return current; }, boxRect, setTopo: v => { topo = !!v; }, get topo() { return topo; },
+    setBudget: v => { budget = Math.max(0, Math.min(DV_MAX, +v)); }, get budget() { return budget; }, trackY: yForBudget, DV_MAX, engChips, get viewZoom() { return current === 'engage' ? (ENG.zoomNow ?? 1) : 1; }, get scale() { return scaleMode; }, setZoom, get zoom() { return zoom; }, get trueScale() { return scaleMode === 'true' && (current === 'geo' || current === 'dro'); },   /* true scale exists in LEO TO GEO / LEO TO DRO only; elsewhere the pieces stay live */ setScale, gdDemo, get orbitsLike() { return grp() === 'orbits' || current === 'capture' || current === 'competitor'; }, get drawsBodies() { return scaleMode === 'true' && (current === 'geo' || current === 'dro'); },
     titles: Object.fromEntries(MODE_NAMES.map((m, i) => [m, MODE_TITLES[i]])), get handMode() { return current === 'engage' || (current === 'orbits' && OR.zoomOn); }, orbitsDemo: (pc, noMoon) => orbitsDemo(pc, noMoon),
     get trueBodies() { return OR.trueB || []; },   // true scale: the drawn Earth and Moon {x, y, r} in mm (the page keeps its Seldon stand-ins clear of them)
     orbitsFigures: () => ({ earth: OGEO.FIG.E, moon: OGEO.FIG.M, seldon: OGEO.FIG.S }),

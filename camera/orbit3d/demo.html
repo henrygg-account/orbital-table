@@ -620,7 +620,7 @@ addEventListener('keydown', e => {
 // ================================================================ PRESENTER (show state) ================================================================
 // The tablet (presenter.html) and the keys below post to live.py's /show; it comes back as feed.show (contract: NIGHT-AGENTS.md). Without live.py
 // the keys and ?show=mode:dro,scale:true,freeze:1,sky:off apply here. Modes expose optional hooks: setMode, setScale, setOpts(mode, opts), reset.
-const SHOW = { mode: null, scale: 'show', freeze: false, sky: 'still', reset: null, mode_opts: {}, play: true, t: null };   // play false: dots stop, films hold; t: scrub position (modes.seek, once per change)
+const SHOW = { mode: null, scale: 'show', freeze: false, sky: 'still', reset: null, mode_opts: {}, play: true, t: null, zoom: 1 };   // play false: dots stop, films hold; t: scrub position (modes.seek, once per change)
 window.SHOW_SKY = 'still';                                  // the sky code reads this: 'still' | 'slow' | 'off'
 const showFrozen = () => SHOW.freeze;                       // frozen: feed piece updates are ignored (the tick below checks this)
 const frozenEl = document.body.appendChild(Object.assign(document.createElement('div'), { className: 'mt mt-eyebrow', textContent: 'FROZEN' }));
@@ -631,6 +631,7 @@ function applyShow(s) {
   const prev = JSON.stringify(SHOW);
   if (s.mode && s.mode !== SHOW.mode) { SHOW.mode = s.mode; optsSent = null; modes.setMode?.(s.mode); engagePieces(); }   // demo: the new mode's stand-ins
   if (s.scale && s.scale !== SHOW.scale) { SHOW.scale = s.scale; modes.setScale?.(s.scale); engagePieces(); }
+  if (typeof s.zoom === 'number' && s.zoom !== SHOW.zoom) { SHOW.zoom = s.zoom; modes.setZoom?.(s.zoom); engagePieces(); }   // the presenter's zoom slider
   if (s.mode_opts) { SHOW.mode_opts = s.mode_opts; const o = s.mode_opts[SHOW.mode], j = JSON.stringify(o); if (o && j !== optsSent) { optsSent = j; modes.setOpts?.(SHOW.mode, o); } }
   if (s.reset != null) { if (SHOW.reset != null && s.reset !== SHOW.reset) modes.reset?.(); SHOW.reset = s.reset; }   // the first value seen is not a press
   if (s.freeze != null) SHOW.freeze = !!s.freeze;
@@ -647,7 +648,7 @@ function postShow(patch) {                                  // live.py is the so
   if (online()) fetch('/show', { method: 'POST', body: JSON.stringify(patch) }).then(r => r.json()).then(applyShow).catch(() => applyShow(patch));
   else applyShow(patch);
 }
-if (Q.get('show')) { const o = {}; for (const kv of Q.get('show').split(',')) { const [k, v] = kv.split(':'); o[k] = k === 'freeze' || k === 'play' ? v === '1' : k === 't' ? +v : v; } applyShow(o); }   // test hook
+if (Q.get('show')) { const o = {}; for (const kv of Q.get('show').split(',')) { const [k, v] = kv.split(':'); o[k] = k === 'freeze' || k === 'play' ? v === '1' : k === 't' || k === 'zoom' ? +v : v; } applyShow(o); }   // test hook
 addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toLowerCase(), M = ['geo', 'capture', 'dro', 'competitor'];

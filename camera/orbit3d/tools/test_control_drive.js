@@ -91,5 +91,13 @@ await section('true-scale LEO', async () => {
   { const b = G.bodyAt(maps, 150 + touch, 400); check('true scale: a Seldon touching Earth is drawn on the true LEO ring', Math.abs(b.rho - G.R_LEO * k) < 0.01, `${b.rho.toFixed(2)} mm`); }
 });
 
+await section('zoom', async () => {
+  await post({ mode: 'capture', zoom: 1.5 }); await until(() => T().SHOW.zoom === 1.5, 'zoom to reach the page'); await sleep(800);
+  const M = T().modes;
+  check('zoom 1.5: CAPTURE / COMPETITOR radii scale', M.zoom === 1.5 && Math.abs(M.testState.rho.geo - 265 * 1.5) < .01, `zoom ${M.zoom}, GEO at ${M.testState.rho.geo} mm`);
+  await post({ mode: 'geo', zoom: 0.5 }); await until(() => T().SHOW.zoom === 0.5, 'zoom 0.5'); await sleep(800);
+  const ts = T().modes.testState; check('zoom 0.5: LEO stays clear of the Earth piece', ts.rho.leo >= 60 && ts.geoView.leoMm >= 60 && Math.abs(ts.geoView.geoMm - 125) < .01, `capture LEO ${ts.rho.leo} mm, geo LEO ${ts.geoView.leoMm} / GEO ${ts.geoView.geoMm} mm`);
+  await post({ zoom: 1 }); await until(() => T().SHOW.zoom === 1, 'zoom back to 1');
+});
 check('no errors on the page in any mode', !pageErrors.length, pageErrors.slice(0, 3).join(' | ') || 'none');
 await J('/result', out);

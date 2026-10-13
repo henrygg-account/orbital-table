@@ -8,6 +8,9 @@ export const wrap = a => { a %= TAU; return a < 0 ? a + TAU : a; };
 // One table scale for both modes: distance from the Earth piece (mm) <-> orbit radius (km). Logarithmic so LEO, GEO and the
 // Moon's distance all fit; "not to scale". LEO ring 70 mm (clear of the 66 mm Earth base), GEO 280 mm, Moon distance 320 mm.
 export const RHO = { leo: 70, geo: 265, far: 300 };
+const RHO0 = { ...RHO };
+// the presenter's zoom: the whole radius table scales about Earth; LEO stays clear of the Earth piece and a Seldon base (60 mm)
+export function setZoom(z) { RHO.geo = RHO0.geo * z; RHO.far = RHO0.far * z; RHO.leo = Math.min(Math.max(60, RHO0.leo * z), RHO.geo - 40); }
 export const rhoOfR = r => r <= R_GEO
   ? RHO.leo + (RHO.geo - RHO.leo) * Math.log(Math.max(r, R_LEO) / R_LEO) / Math.log(R_GEO / R_LEO)
   : RHO.geo + (RHO.far - RHO.geo) * Math.log(Math.min(r, L_KM) / R_GEO) / Math.log(L_KM / R_GEO);
