@@ -85,7 +85,9 @@ await section('true-scale LEO', async () => {
   check('true scale: Seldon touching Earth is in LEO', Math.abs(alt(touch) - 400) < 1, `${alt(touch).toFixed(0)} km at ${touch.toFixed(1)} mm`);
   check('true scale: inside the footprint is still LEO', Math.abs(alt(G.R_E * k + 5) - 400) < 1, `${alt(G.R_E * k + 5).toFixed(0)} km`);
   const far = alt(G.R_E * k + foot + 100); check('true scale: altitude grows from the footprint at true scale', Math.abs(far - (400 + 100 / k)) < 5, `${far.toFixed(0)} km for 100 mm beyond (want ${(400 + 100 / k).toFixed(0)})`);
-  check('true scale: GEO ring is where GEO is plus the footprint offset', maps.E.rho(G.R_GEO) > G.R_GEO * k && maps.E.rho(G.R_GEO) - G.R_GEO * k < foot + 1, `${maps.E.rho(G.R_GEO).toFixed(1)} mm`);
+  check('true scale: the GEO ring is drawn at true scale', Math.abs(maps.E.rho(G.R_GEO) - G.R_GEO * k) < 0.01, `${maps.E.rho(G.R_GEO).toFixed(1)} mm`);
+  check('true scale: the LEO ring is drawn at true scale (just above the disc)', Math.abs(maps.E.rho(G.R_LEO) - G.R_LEO * k) < 0.01, `${maps.E.rho(G.R_LEO).toFixed(2)} mm, disc ${(G.R_E * k).toFixed(2)} mm`);
+  { const b = G.bodyAt(maps, 150 + touch, 400); check('true scale: a Seldon touching Earth is drawn on the true LEO ring', Math.abs(b.rho - G.R_LEO * k) < 0.01, `${b.rho.toFixed(2)} mm`); }
 });
 
 await J('/result', out);

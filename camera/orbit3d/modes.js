@@ -1548,6 +1548,8 @@ export function createModes(ctx) {
   }
   function reset() { OR.last = [null, null, null]; for (const T of [OR.tr, OR.trG]) Object.assign(T, { draw: 0, still: 0, key: null }); }   // dots restart from their pieces, the transfer is drawn out again
   // demo stand-ins for geo / dro (what the camera would see); `given` names the pieces the URL already placed
+  // standAt: where a piece stands (mm from Earth's centre) for an orbit of r km; in true scale that is the footprint rule, not the drawn ring
+  const standAt = (maps, r) => maps.E.rho0 != null ? maps.E.rho0 + Math.max(0, r - OGEO.R_LEO) * maps.k : maps.E.rho(r);
   function gdDemo(mode, pc, given = []) {
     const TS = scaleMode === 'true', out = {}, use = k => !given.includes(k), at = (B, rho, deg) => { const t = deg * Math.PI / 180; return { x_mm: B.cx + rho * Math.cos(t), y_mm: B.cy - rho * Math.sin(t), seen_ago: 0 }; };
     if (mode === 'capture' || mode === 'competitor') {            // Earth at the centre, no Moon; the Seldons sit where the film makes sense
@@ -1562,15 +1564,15 @@ export function createModes(ctx) {
       const e = TS ? fixedEM().earth : pc.earth && given.includes('earth') ? pc.earth : { x_mm: SW() / 2, y_mm: SH() / 2 }, maps = TS ? OGEO.makeTrueMaps([e.x_mm, e.y_mm], [fixedEM().moon.x_mm, e.y_mm], { noZone: true, foot: TRUE_FOOT }) : OGEO.makeGeoMaps([e.x_mm, e.y_mm]);
       if (use('earth')) out.earth = { x_mm: e.x_mm, y_mm: e.y_mm, seen_ago: 0 };
       if (use('moon')) out.moon = null;                          // the Moon is not part of this mode
-      if (use('s1')) out['seldon-1'] = at(maps.E, maps.E.rho(OGEO.R_LEO) + (TS ? 4 : 0), 60);
-      if (use('s2')) out['seldon-2'] = at(maps.E, maps.E.rho(OGEO.R_GEO) - 22, 200);   // a little inside the GEO ring: locks onto it
+      if (use('s1')) out['seldon-1'] = at(maps.E, standAt(maps, OGEO.R_LEO) + (TS ? 4 : 0), 60);
+      if (use('s2')) out['seldon-2'] = at(maps.E, standAt(maps, OGEO.R_GEO) - 22, 200);   // a little inside the GEO ring: locks onto it
     } else {
       const L = OGEO.LAYOUT, e = given.includes('earth') ? pc.earth : { x_mm: TS ? fixedEM().earth.x_mm : L.earth[0], y_mm: TS ? fixedEM().earth.y_mm : L.earth[1] };
       const m = given.includes('moon') ? pc.moon : { x_mm: TS ? fixedEM().moon.x_mm : L.moon[0], y_mm: TS ? fixedEM().moon.y_mm : L.moon[1] };
       const maps = TS ? OGEO.makeTrueMaps([e.x_mm, e.y_mm], [m.x_mm, m.y_mm], { foot: TRUE_FOOT }) : OGEO.makeMaps([e.x_mm, e.y_mm], [m.x_mm, m.y_mm]);
       if (use('earth')) out.earth = { x_mm: e.x_mm, y_mm: e.y_mm, seen_ago: 0 };
       if (use('moon')) out.moon = { x_mm: m.x_mm, y_mm: m.y_mm, seen_ago: 0 };
-      if (use('s1')) out['seldon-1'] = at(maps.E, TS ? maps.E.rho(OGEO.R_LEO) + 4 : maps.E.rho(Math.max(OGEO.R_LEO, maps.E.r(EARTH_PIECE_R + SELDON_BASE_R + 2))), 135);
+      if (use('s1')) out['seldon-1'] = at(maps.E, TS ? standAt(maps, OGEO.R_LEO) + 4 : maps.E.rho(Math.max(OGEO.R_LEO, maps.E.r(EARTH_PIECE_R + SELDON_BASE_R + 2))), 135);
       out['seldon-2'] = null;                                    // one Seldon only
     }
     return out;
