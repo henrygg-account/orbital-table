@@ -48,6 +48,7 @@ SAM 2 outlines (cloud/label5.py). It is **live.py's default on this branch** (`r
 | All (2,417 frames, incl. round 4's) | recall | 0.897 | **0.942** |
 | | precision | 0.942 | **0.958** |
 
+Checked on this laptop: it loads and runs on DirectML (live.py `--video` on a recording). On that same recording, where round 4 saw the Earth at ~0.06 confidence (so the page said "Place Earth."), round 5 sees it at 0.87, Seldon-1 at 0.84, Seldon-2 at 0.88.
 Earth, Moon and Seldons individually move only ±0.02-0.05 in mask quality; the gains are fewer misses and phantoms, and
 hands (which the new hand gate uses). Caveat: the labels are machine-made with round 4 as one of the voters, so this is
 agreement with a stronger labelling pipeline, not human ground truth. Known label flaw: a dark round stool off the table is
