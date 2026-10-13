@@ -58,6 +58,40 @@ export function makeMaps(earth = LAYOUT.earth, moon = LAYOUT.moon, S = SCALE) {
     r: rho => R_M + altS * Math.pow(Math.max(0, rho - S.aM) / (zone - S.aM), 1 / S.pM) });
   return { E, M, Dmm, zone, k, thM: moon ? Math.atan2(-(moon[1] - ey), moon[0] - ex) : 0 };
 }
+// ---- LEO TO GEO / LEO TO DRO views (modes 'geo', 'dro') ----
+// geo: Earth alone, drawn as the old squeezed map: LEO well clear of the 66 mm base, GEO at geoMm, linear in radius between.
+export const GEO_VIEW = { leoMm: 78, geoMm: 250 };
+export function makeGeoMaps(earth, S = GEO_VIEW) {
+  const [ex, ey] = earth, a = S.leoMm, kk = (S.geoMm - a) / (R_GEO - R_LEO);
+  const E = withXY({ cx: ex, cy: ey, mu: MU_E, R: R_E, rho: r => r >= R_LEO ? a + (r - R_LEO) * kk : a * r / R_LEO, r: rho => rho >= a ? R_LEO + (rho - a) / kk : rho / a * R_LEO });
+  return { E, M: null, Dmm: null, zone: 0, k: kk, thM: 0 };
+}
+// true scale: one linear mm-per-km for everything, the Earth-Moon distance (mm) sets it; nothing is enlarged. noZone: no Moon zone (geo)
+export function makeTrueMaps(earth, moon, S = {}) {
+  const [ex, ey] = earth, Dmm = Math.hypot(moon[0] - ex, moon[1] - ey), k = Dmm / D_EM, thM = Math.atan2(-(moon[1] - ey), moon[0] - ex);
+  const lin = (cx, cy, mu, R) => withXY({ cx, cy, mu, R, off: 0, rho: r => r * k, r: rho => rho / k });
+  return { E: lin(ex, ey, MU_E, R_E), M: droStretch(lin(moon[0], moon[1], MU_M, R_M), thM), Dmm, zone: S.noZone ? 0 : R_SOI * k, k, thM, scaleTrue: true };
+}
+// GEO lock: a body within `band` mm (drawn) of the GEO ring snaps onto it; once locked it holds until 1.4 x band away
+export function lockGeo(maps, b, was, band) {
+  if (b.prim !== 'E') return b;
+  const rg = maps.E.rho(R_GEO);
+  return Math.abs(b.rho - rg) < band * (was ? 1.4 : 1) ? { ...b, r: R_GEO, rho: rg, n: Math.sqrt(MU_E / R_GEO ** 3), locked: true } : b;
+}
+// DRO lock: a body generally near the Moon (inside its zone, which is not drawn; 12% more once locked) is in the DRO of size rDro km
+export function lockDro(maps, x, y, b, was, rDro) {
+  const M = maps.M;
+  if (!M || !(maps.zone > 0)) return b;
+  const dm = Math.hypot(x - M.cx, y - M.cy), de = Math.hypot(x - maps.E.cx, y - maps.E.cy);
+  if (!(dm < maps.zone * (was ? 1.12 : 1) && dm < de)) return b;
+  return { prim: 'M', B: M, rho: M.rho(rDro), th: M.inv(x, y).th, r: rDro, n: Math.sqrt(MU_M / rDro ** 3), dir: M.dir, locked: true };
+}
+// where a body `a` is heading: the circular orbit of radius r km about prim ('E' or 'M'). Earth to Earth, the phase is set
+// so the transfer has no wait.
+export function targetBody(maps, a, prim, r) {
+  const B = prim === 'M' ? maps.M : maps.E, n = Math.sqrt(B.mu / r ** 3);
+  return { prim, B, rho: B.rho(r), th: prim === 'E' && a.prim === 'E' ? a.th + Math.PI - n * hoh(MU_E, a.r, r).tof : a.th, r, n, dir: B.dir, virtual: true };
+}
 // a body's drawing frame: xy(rho, th) -> table point for drawn radius rho at angle th (CCW, math axes); inv(x, y) -> { rho, th }.
 // dir: the way its orbits run (+1 anticlockwise; the Moon's are retrograde DROs, -1)
 function withXY(B) {
