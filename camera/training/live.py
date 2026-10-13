@@ -575,11 +575,43 @@ def find_camera(name='iphone'):
     raise SystemExit(f'no camera matching "{name}" (found: {found}). iPhone: nearby, unlocked once, same Apple ID?')
 
 
+class ChangeGate:
+    """Passive recording keeps a frame only if the table area (screen_crop) visibly changed since the last frame kept:
+    the share of pixels that moved by more than LEVEL grey levels, on a 320 px wide blurred copy, above SHARE. The
+    tracker's 'busy' alone wasn't enough: at dusk the gain rose, the detections jittered and a still table was 'moving',
+    and 12 of every 15 minutes got recorded. Measured on those files (Oct 12): consecutive frames of a still table
+    0.000% (99th percentile), hands and moving pieces 0.5-1.8% (median); 0.3% splits them. prune.py uses it too."""
+    LEVEL, SHARE = 20, 0.003
+
+    def __init__(self, H=None):
+        self.H, self.ref, self.crop = H, None, None
+
+    def small(self, f):
+        fh, fw = f.shape[:2]
+        if self.crop is None or self.crop[0] != (fw, fh):
+            mm = (state.get('cfg') or load_config())['screen_mm']
+            self.crop = ((fw, fh), screen_crop(self.H, (fw, fh), mm) if self.H is not None else (0, 0, fw, fh))
+        x0, y0, x1, y1 = self.crop[1]
+        g = cv2.cvtColor(f[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
+        g = cv2.resize(g, (320, max(1, round(320 * (y1 - y0) / (x1 - x0)))), interpolation=cv2.INTER_AREA)
+        return cv2.GaussianBlur(g, (5, 5), 0)
+
+    def changed(self, f, H=None):
+        """True (and f becomes the new reference) if f differs visibly from the last frame that passed."""
+        if H is not None and H is not self.H:              # recalibrated: new crop, new reference
+            self.H, self.ref, self.crop = H, None, None
+        s = self.small(f)
+        if self.ref is not None and s.shape == self.ref.shape and                 (cv2.absdiff(s, self.ref) > self.LEVEL).mean() <= self.SHARE:
+            return False
+        self.ref = s
+        return True
+
+
 class Recorder:
-    """Writes new camera frames to an .mp4 on its own thread, for a fixed time (training video).
+    """Writes new camera frames to a video (.mp4 H.264; Windows: .avi MJPEG on the CPU) on its own thread, for a fixed time (training video).
 
     Default: every frame, one file (record-guide.html's shot list). active=True (GET /record?active=1, for a day of
-    passive collection): only frames while the table is busy (a hand over it or a piece moving: not state['idle']), at
+    passive collection): only frames while the table is busy (not state['idle']) and visibly changed (ChangeGate), at
     most `fps` a second, in SEGMENT_MIN files; a segment that caught nothing is deleted, so idle time costs no disk.
     Each kept segment gets <name>.json with the calibration it was shot under (for labelling)."""
     SEGMENT_MIN = 15
@@ -588,15 +620,22 @@ class Recorder:
         self.grab, self.fps, self.active = grab, fps, active
         self.t0, self.end, self.stop = time.time(), time.time() + 60 * minutes, False
         self.n, self.kept, self.dropped, self.out = 0, [], 0, None
+        self.gate = ChangeGate()
         (HERE / 'videos').mkdir(exist_ok=True)
         self._open()
-        threading.Thread(target=self._run, daemon=True).start()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
 
     def _open(self):
         f = self.grab.frame
-        self.path = HERE / 'videos' / f'rec_{time.strftime("%Y%m%d-%H%M%S")}.mp4'
-        api = [cv2.CAP_MSMF] if sys.platform == 'win32' else []    # Windows: H.264 via Media Foundation (OpenCV's FFmpeg can't)
-        self.out = cv2.VideoWriter(str(self.path), *api, cv2.VideoWriter_fourcc(*'avc1'), self.fps, (f.shape[1], f.shape[0]))
+        size, name = (f.shape[1], f.shape[0]), f'rec_{time.strftime("%Y%m%d-%H%M%S")}'
+        if sys.platform == 'win32':    # MJPEG .avi, encoded by OpenCV on the CPU: Windows' H.264 encoder runs on the GPU,
+            self.path = HERE / 'videos' / f'{name}.avi'   # and when a GPU fault hung DirectML (Oct 12) it froze with it
+            self.out = cv2.VideoWriter(str(self.path), cv2.CAP_OPENCV_MJPEG, cv2.VideoWriter_fourcc(*'MJPG'), self.fps, size)
+            self.out.set(cv2.VIDEOWRITER_PROP_QUALITY, 90)
+        else:
+            self.path = HERE / 'videos' / f'{name}.mp4'
+            self.out = cv2.VideoWriter(str(self.path), cv2.VideoWriter_fourcc(*'avc1'), self.fps, size)
         self.seg_t0, self.seg_n = time.time(), 0
 
     def _close(self):
@@ -623,12 +662,17 @@ class Recorder:
             if self.active:
                 if now - self.seg_t0 > 60 * self.SEGMENT_MIN:
                     self._close(); self._open()
-                if state.get('idle') or now - last < 1 / self.fps:
+                if state.get('idle') or now - last < 1 / self.fps or not self.gate.changed(f, state.get('H')):
                     continue
                 last = now
             self.out.write(f); self.n += 1; self.seg_n += 1
         self._close()
         print(f'recording done: {self.n} frames in {time.time() - self.t0:.0f} s, files {self.kept}', flush=True)
+
+    def finish(self, timeout=5):
+        """Stop and wait for the current file to be closed."""
+        self.stop = True
+        self.thread.join(timeout)
 
     def status(self):
         live = not self.stop and time.time() < self.end
@@ -739,6 +783,8 @@ def main():
     ap.add_argument('--port', type=int, default=8780)
     ap.add_argument('--no-browser', action='store_true')
     ap.add_argument('--no-window', action='store_true', help='no OpenCV preview (headless)')
+    ap.add_argument('--record', type=float, default=0, metavar='MIN',
+                    help='start passive recording at launch for MIN minutes (as GET /record?active=1&min=MIN)')
     ap.add_argument('--exposure', choices=('fixed', 'auto'), default='fixed',
                     help="Windows: 'fixed' = 30 fps with the gain holding auto exposure's brightness (FixedRateExposure); "
                          "'auto' = the camera's own (drops to ~14 fps in room light)")
@@ -797,6 +843,9 @@ def main():
               '(export.py) with onnxruntime-directml installed.')
     if not a.no_browser:
         webbrowser.open(f'http://localhost:{a.port}')
+    if a.record:                           # passive collection from the start (and again after a restart)
+        grab.next(0)
+        state['rec'] = Recorder(grab, a.record, fps=10, active=True)
 
     fps, last, ms, shown, snapped, t0, busy_t = 0.0, time.time(), 0.0, 0.0, 0.0, 0.0, time.time()
     crop_for, crop, sz = None, None, a.imgsz
@@ -819,8 +868,16 @@ def main():
             sz = crop_imgsz(crop, (fw, fh), a.imgsz)                 # exported models keep their own fixed size (export.py)
         cx0, cy0, cx1, cy1 = crop
         t0 = time.time()
-        r = model.predict(np.ascontiguousarray(frame[cy0:cy1, cx0:cx1]), imgsz=sz, conf=state['tune']['conf'],
-                          agnostic_nms=True, verbose=False, **dev_kw)[0]   # one class per object
+        try:
+            r = model.predict(np.ascontiguousarray(frame[cy0:cy1, cx0:cx1]), imgsz=sz, conf=state['tune']['conf'],
+                              agnostic_nms=True, verbose=False, **dev_kw)[0]   # one class per object
+        except Exception as e:             # Windows: a GPU fault/reset kills the DirectML session (DXGI 887A0006, Oct 12):
+            if not dml:                    # open a new one and carry on; if that fails too, main() exits and gets restarted
+                raise
+            print(f'{time.strftime("%H:%M:%S")} model failed ({str(e).strip().splitlines()[-1][-160:]}): reloading', flush=True)
+            time.sleep(2)
+            model = YOLO(a.weights, task='segment' if '-seg' in str(a.weights) else 'detect')
+            continue
         ms = 0.9 * ms + 0.1 * (time.time() - t0) * 1000
         state['model_ms'] = ms
         state['model_parts'] = {k: round(0.9 * (state.get('model_parts') or {}).get(k, v) + 0.1 * v, 1)   # ultralytics' own split
@@ -895,4 +952,11 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except BaseException:                  # exit for real, so a supervisor loop can restart it: a crashed main loop used to
+        import traceback                   # leave the camera, server and recorder threads running with no detector
+        traceback.print_exc()
+        if state.get('rec'):
+            state['rec'].finish()          # close the current file properly (a video never closed can't be read)
+        os._exit(1)
