@@ -26,6 +26,7 @@
   .mode.on, .seg button.on { border-color: #f6f8f8; color: #f6f8f8; background: rgba(246,248,248,.12); }
   .ctl { display: grid; gap: 8px; }
   .seg { display: flex; gap: 8px; }
+  button:disabled { opacity: .3; cursor: default; }
   .seg button { flex: 1; height: 52px; font-size: 13px; border-radius: 999px; padding: 0 10px; }
   .big { height: 56px; font-size: 13px; width: 100%; border-radius: 999px; }
   .big.frz.on { border-color: var(--adv); color: var(--adv); background: rgba(226,96,79,.12); }
@@ -154,13 +155,14 @@ function render() {
   seg($('modes'), MODES, show.mode, m => post({ mode: m }));
   document.querySelectorAll('#modes button').forEach((b, i) => { b.className = 'mode' + (MODES[i][0] === show.mode ? ' on' : ''); b.innerHTML = `${MODES[i][1]}<i>${i + 1}</i>`; });
   seg($('scale'), SCALES, show.scale, v => post({ scale: v }));
+  { const ok = show.mode === 'geo' || show.mode === 'dro'; for (const b of $('scale').children) b.disabled = !ok; $('scale').title = ok ? '' : 'True scale: LEO TO GEO and LEO TO DRO only'; }
   seg($('sky'), SKIES, show.sky, v => post({ sky: v }));
   $('pp').className = 'big pp' + (show.play ? '' : ' on'); $('pp').textContent = show.play ? 'Pause' : 'Play';
   if (show.t != null && !scrubbing) $('scrub').value = Math.round(show.t * 1000);
   $('scrub').disabled =!FILM_MODES.includes(show.mode); $('playbox').hidden = $('scrub').disabled;
   $('freeze').className = 'big frz' + (show.freeze ? ' on' : ''); $('freeze').textContent = show.freeze ? 'Frozen: tap to release' : 'Freeze pieces';
   renderOpts();
-  $('st-mode').textContent = titleOf(show.mode); $('st-scale').textContent = show.scale === 'true' ? 'True' : 'Show';
+  $('st-mode').textContent = titleOf(show.mode); $('st-scale').textContent = show.scale === 'true' && (show.mode === 'geo' || show.mode === 'dro') ? 'True' : 'Show';
   $('st-frz').textContent = show.freeze ? 'Frozen' : 'Live'; $('st-frz').style.color = show.freeze ? 'var(--adv)' : '';
 }
 
