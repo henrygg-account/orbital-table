@@ -368,7 +368,7 @@ class CalibRequest:
 # The presenter's controls (presenter.html, or keys on the TV page): one object, broadcast in every /events message.
 # Kept in memory and in show.json (gitignored) so a restart of live.py keeps the mode. Contract: NIGHT-AGENTS.md.
 SHOW_JSON = HERE / 'show.json'
-SHOW_DEFAULT = {'mode': 'geo', 'scale': 'show', 'freeze': False, 'sky': 'still', 'reset': 0, 'mode_opts': {}}
+SHOW_DEFAULT = {'mode': 'geo', 'scale': 'show', 'freeze': False, 'sky': 'still', 'reset': 0, 'mode_opts': {}, 'beat': 0}   # beat: run-of-show position (presenter.html only; the table ignores it)
 SHOW_CHOICES = {'mode': ('geo', 'capture', 'dro', 'competitor'), 'scale': ('show', 'true'), 'sky': ('still', 'slow', 'off')}
 show = json.loads(json.dumps(SHOW_DEFAULT))
 show_lock = threading.Lock()
@@ -391,6 +391,8 @@ def show_update(patch, save=True):
                 show[k] = patch[k]
         if isinstance(patch.get('freeze'), bool):
             show['freeze'] = patch['freeze']
+        if type(patch.get('beat')) is int and 0 <= patch['beat'] < 100:
+            show['beat'] = patch['beat']
         if patch.get('reset') is True:
             show['reset'] += 1
         if isinstance(patch.get('mode_opts'), dict):

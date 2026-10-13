@@ -9,20 +9,19 @@
   :root { --ours: #0ee3a6; --adv: #e2604f; --line: rgba(246,248,248,.14); --dim: #8a969a; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; background: #0a0d0d; color: #dde3e4; font-family: var(--font-display); font-weight: 400; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
-  body { padding: 18px 28px 18px; max-width: 1180px; margin: 0 auto; }
+  body { padding: 12px 20px; max-width: 1180px; margin: 0 auto; height: 100vh; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
   .eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); display: flex; align-items: center; gap: 10px; }
   .eyebrow .sq { width: 8px; height: 8px; background: var(--ours); display: inline-block; }
   .eyebrow .conn { margin-left: auto; display: flex; align-items: center; gap: 8px; }
   .eyebrow .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--gg-fog-400); }
   .eyebrow .dot.on { background: var(--ours); }
-  h1 { font-weight: 500; font-size: 28px; margin: 4px 0 14px; letter-spacing: -.01em; color: #f6f8f8; }
-  .grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 14px; }
-  .card { border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px 18px; background: #0d1113; }
-  .card h2 { font-family: var(--font-mono); font-weight: 400; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; margin: 0 0 12px; color: var(--dim); }
-  .modes { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; gap: 12px; height: calc(100% - 28px); }
+  .grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 12px; flex: 1; min-height: 0; }
+  .card { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; min-height: 0; display: flex; flex-direction: column; background: #0d1113; }
+  .card h2 { font-family: var(--font-mono); font-weight: 400; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; margin: 0 0 10px; color: var(--dim); }
+  .modes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
   button { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .14em; color: #dde3e4; cursor: pointer; border: 1px solid var(--line); background: rgba(246,248,248,.04); border-radius: 14px; }
   button:active { background: rgba(246,248,248,.14); }
-  .mode { height: 100%; min-height: 84px; font-size: 17px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 8px; }
+  .mode { height: 62px; font-size: 14px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 5px; }
   .mode i { font-style: normal; font-size: 11px; color: var(--dim); }
   .mode.on, .seg button.on { border-color: #f6f8f8; color: #f6f8f8; background: rgba(246,248,248,.12); }
   .ctl { display: grid; gap: 8px; }
@@ -35,40 +34,97 @@
   .lbl .v { color: #f6f8f8; font-family: var(--font-display); font-size: 16px; letter-spacing: 0; text-transform: none; }
   .opt { margin-bottom: 8px; } .opt:last-child { margin-bottom: 0; }
   input[type=range] { width: 100%; height: 44px; accent-color: #dde3e4; }
-  .opts { margin-top: 14px; }
+  .opts { margin-top: 4px; }
   .none { color: var(--dim); font-size: 14px; }
-  .status { margin-top: 14px; border: 1px solid var(--line); border-radius: 14px; padding: 14px 18px; background: #0d1113; display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+  .status { margin-top: 12px; border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; background: #0d1113; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 12px; }
   .status .k { font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
   .status .s { font-size: 19px; color: #f6f8f8; font-variant-numeric: tabular-nums; }
   .status .s i { font-style: normal; font-size: 11px; color: var(--dim); margin-left: 3px; }
-  .foot { margin-top: 14px; font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; display: flex; gap: 20px; }
+  .foot { margin-top: 6px; font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; display: flex; gap: 20px; }
   .foot a { color: var(--dim); text-decoration: none; padding: 8px 0; }
-  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .status { grid-template-columns: repeat(3, 1fr); } }
+  .ctl { gap: 6px; align-content: start; }
+  .ctl .seg button { height: 46px; } .ctl .big { height: 48px; }
+
+  /* run of show */
+  .rhead { display: flex; justify-content: space-between; align-items: baseline; }
+  .rhead .n { font-family: var(--font-mono); font-size: 12px; letter-spacing: .14em; color: #f6f8f8; }
+  .strip { display: flex; gap: 6px; margin-bottom: 10px; }
+  .grp { display: flex; flex-direction: column; gap: 4px; flex: 1; border-top: 2px solid var(--line); padding-top: 4px; min-width: 0; }
+  .grp.on { border-top-color: #f6f8f8; }
+  .grp .g { font-family: var(--font-mono); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); white-space: nowrap; overflow: hidden; }
+  .grp.on .g { color: #f6f8f8; }
+  .chips { display: flex; gap: 4px; }
+  .chip { flex: 1; height: 44px; padding: 0; font-size: 13px; letter-spacing: 0; border-radius: 10px; }
+  .chip.on { border-color: #f6f8f8; color: #f6f8f8; background: rgba(246,248,248,.14); }
+  .chip.done { color: var(--dim); }
+  .notes { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-right: 4px; }
+  .notes h3 { font-weight: 500; font-size: 24px; margin: 0 0 4px; color: #f6f8f8; letter-spacing: -.01em; }
+  .notes .tag { font-family: var(--font-mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); margin-bottom: 10px; }
+  .notes .warn { color: var(--adv); }
+  .notes h4 { font-family: var(--font-mono); font-weight: 400; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); margin: 12px 0 6px; }
+  .notes ul { margin: 0; padding: 0; list-style: none; }
+  .notes li { font-size: 17px; line-height: 1.35; padding: 3px 0 3px 14px; position: relative; }
+  .notes li::before { content: ''; position: absolute; left: 0; top: 13px; width: 6px; height: 6px; background: var(--dim); }
+  .notes ul.say li { font-size: 19px; color: #f6f8f8; } .notes ul.say li::before { background: #f6f8f8; }
+  .num { display: grid; grid-template-columns: 1fr; gap: 0; }
+  .num > div { padding: 6px 0; border-top: 1px solid var(--line); }
+  .num .k { font-family: var(--font-mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+  .num .v { font-size: 18px; color: #f6f8f8; font-variant-numeric: tabular-nums; }
+  .num .s { font-size: 11px; color: var(--dim); }
+  .ph { border: 1px dashed var(--dim); background: rgba(246,248,248,.08); border-radius: 4px; padding: 0 4px; color: #f6f8f8; }
+  .nav { display: flex; gap: 10px; margin-top: 10px; }
+  .nav button { height: 72px; font-size: 16px; border-radius: 999px; }
+  .nav .prev { flex: 1; } .nav .next { flex: 2; border-color: #f6f8f8; color: #f6f8f8; background: rgba(246,248,248,.1); }
+  .nav button:disabled { opacity: .3; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+  .tabs button { flex: 1; height: 44px; font-size: 13px; border-radius: 999px; }
+  .tabs button.on { border-color: #f6f8f8; color: #f6f8f8; background: rgba(246,248,248,.12); }
+  .pane { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .pane[hidden], #qs[hidden] { display: none; }
+  #qs { display: flex; flex-direction: column; }
+  #qs input { width: 100%; height: 46px; border-radius: 999px; border: 1px solid var(--line); background: rgba(246,248,248,.04); color: #f6f8f8; font: 16px var(--font-display); padding: 0 18px; margin-bottom: 8px; user-select: text; -webkit-user-select: text; }
+  #ql { flex: 1; min-height: 0; overflow-y: auto; }
+  .q { border: 1px solid var(--line); border-radius: 12px; margin-bottom: 6px; background: rgba(246,248,248,.03); }
+  .q > button { width: 100%; border: 0; background: none; text-align: left; text-transform: none; letter-spacing: 0; font: 500 17px var(--font-display); color: #f6f8f8; padding: 12px 14px; min-height: 48px; }
+  .q .a { padding: 0 14px 12px; }
+  .q .a p { margin: 0 0 8px; font-size: 17px; line-height: 1.4; }
+  .q .act { height: 48px; width: 100%; border-radius: 999px; font-size: 12px; border-color: #f6f8f8; color: #f6f8f8; }
+  .q.on { border-color: rgba(246,248,248,.5); }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; grid-template-rows: 1.15fr 1fr; } .mode { height: 56px; font-size: 12px; } }
 </style>
 </head>
 <body>
 <div class="eyebrow"><span class="sq"></span>General Galactic · Orbital table<span class="conn"><span class="dot" id="dot"></span><span id="conn">Connecting</span></span></div>
-<h1>Presenter</h1>
+<div class="modes" id="modes"></div>
 
 <div class="grid">
-  <div class="card"><h2>Mode</h2><div class="modes" id="modes"></div></div>
-  <div class="card ctl">
-    <div><h2>Scale</h2><div class="seg" id="scale"></div></div>
-    <div><h2>Table</h2><div class="row"><button class="big frz" id="freeze" style="flex:2">Freeze pieces</button><button class="big" id="reset" style="flex:1">Reset</button></div></div>
-    <div><h2>Sky</h2><div class="seg" id="sky"></div></div>
+  <div class="card">
+    <div class="rhead"><h2>Run of show</h2><span class="n" id="bn"></span></div>
+    <div class="strip" id="strip"></div>
+    <div class="notes" id="notes"></div>
+    <div class="nav"><button class="prev" id="prev">Back</button><button class="next" id="next">Next</button></div>
+  </div>
+  <div class="card">
+    <div class="tabs" id="tabs"><button data-t="ctl" class="on">Controls</button><button data-t="qs">Questions</button></div>
+    <div class="pane" id="p-ctl">
+      <div class="ctl">
+        <div><h2>Scale</h2><div class="seg" id="scale"></div></div>
+        <div><h2>Table</h2><div class="row"><button class="big frz" id="freeze" style="flex:2">Freeze pieces</button><button class="big" id="reset" style="flex:1">Reset</button></div></div>
+        <div><h2>Sky</h2><div class="seg" id="sky"></div></div>
+      </div>
+      <div class="opts"><h2 id="opts-h">Options</h2><div id="opts"></div></div>
+      <div class="status">
+        <div><div class="k">Table shows</div><div class="s" id="st-mode">-</div></div>
+        <div><div class="k">Scale</div><div class="s" id="st-scale">-</div></div>
+        <div><div class="k">Pieces</div><div class="s" id="st-frz">-</div></div>
+        <div><div class="k">Pieces seen</div><div class="s" id="st-pieces">-</div></div>
+        <div><div class="k">Detector</div><div class="s" id="st-fps">-</div></div>
+      </div>
+      <div class="foot"><a href="control.html" id="adv">Advanced: engagement sim control</a></div>
+    </div>
+    <div class="pane" id="qs" hidden><input id="qf" type="search" placeholder="Search questions" autocomplete="off"><div id="ql"></div></div>
   </div>
 </div>
-
-<div class="card opts"><h2 id="opts-h">Options</h2><div id="opts"></div></div>
-
-<div class="status">
-  <div><div class="k">Table shows</div><div class="s" id="st-mode">-</div></div>
-  <div><div class="k">Scale</div><div class="s" id="st-scale">-</div></div>
-  <div><div class="k">Pieces seen</div><div class="s" id="st-pieces">-</div></div>
-  <div><div class="k">Detector</div><div class="s" id="st-fps">-</div></div>
-  <div><div class="k">Pieces</div><div class="s" id="st-frz">-</div></div>
-</div>
-<div class="foot"><a href="control.html" id="adv">Advanced: engagement sim control</a></div>
 
 <script>
 // Everything here goes to live.py's /show (contract: NIGHT-AGENTS.md); the table (demo.html) applies it from the /events feed.
@@ -91,7 +147,7 @@ const OPTS = {
   ],
 };
 
-let show = { mode: 'geo', scale: 'show', freeze: false, sky: 'still', reset: 0, mode_opts: {} }, live = false, lastMsg = 0;
+let show = { mode: 'geo', scale: 'show', freeze: false, sky: 'still', reset: 0, mode_opts: {}, beat: 0 }, live = false, lastMsg = 0;
 const $ = id => document.getElementById(id);
 const titleOf = m => (MODES.find(x => x[0] === m) || [0, m])[1];
 
@@ -99,8 +155,12 @@ function seg(el, items, cur, onPick) {
   el.innerHTML = '';
   for (const [v, t] of items) { const b = document.createElement('button'); b.textContent = t; b.className = v === cur ? 'on' : ''; b.onclick = () => onPick(v); el.appendChild(b); }
 }
+// A live.py without `beat` leaves it out of /show: keep the local copy so the run of show still works.
+let localBeat = 0;
+function setShow(s) { if (Number.isInteger(s.beat)) localBeat = s.beat; else s.beat = localBeat; show = s; render(); }
 function post(patch) {   // optimistic: the buttons answer at once; the next /events message confirms
-  fetch(BASE + '/show', { method: 'POST', body: JSON.stringify(patch) }).then(r => r.json()).then(s => { show = s; render(); }).catch(() => { $('conn').textContent = 'Not reaching live.py'; });
+  fetch(BASE + '/show', { method: 'POST', body: JSON.stringify(patch) }).then(r => r.json()).then(s => { setShow(s); }).catch(() => { $('conn').textContent = 'Not reaching live.py'; });
+  if (Number.isInteger(patch.beat)) localBeat = patch.beat;
   const { reset, mode_opts, ...now } = patch; show = { ...show, ...now }; render();
 }
 const opts = () => ({ ...Object.fromEntries((OPTS[show.mode] || []).map(c => [c.id, c.def])), ...(show.mode_opts[show.mode] || {}) });
@@ -125,7 +185,7 @@ function renderOpts() {
   }
 }
 function render() {
-  seg($('modes'), MODES, show.mode, v => post({ mode: v }));
+  seg($('modes'), MODES, show.mode, tapMode); renderShow();
   document.querySelectorAll('#modes button').forEach((b, i) => { b.className = 'mode' + (MODES[i][0] === show.mode ? ' on' : ''); b.innerHTML = `${MODES[i][1]}<i>${i + 1}</i>`; });
   seg($('scale'), SCALES, show.scale, v => post({ scale: v }));
   seg($('sky'), SKIES, show.sky, v => post({ sky: v }));
@@ -134,6 +194,81 @@ function render() {
   $('st-mode').textContent = titleOf(show.mode); $('st-scale').textContent = show.scale === 'true' ? 'True' : 'Show';
   $('st-frz').textContent = show.freeze ? 'Frozen' : 'Live'; $('st-frz').style.color = show.freeze ? 'var(--adv)' : '';
 }
+// ---------------------------------------------------------------- run of show + audience questions (show-notes.json)
+// Beats: tapping one posts its mode (and scale / mode_opts if it names them) and its index as show.beat; the table ignores beat.
+// Placeholders "[fill in: ...]" in the notes are drawn as dashed boxes so they can't be read out by mistake.
+let BEATS = [], QS = [], notesKey = '';
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmt = s => esc(s).replace(/\[fill in:[^\]]*\]/g, m => `<span class="ph">${m}</span>`);
+const beatNow = () => Math.min(Math.max(0, show.beat | 0), Math.max(0, BEATS.length - 1));
+const firstBeat = m => Math.max(0, BEATS.findIndex(b => b.mode === m));
+function goBeat(i) {
+  if (!BEATS.length || i < 0) return;
+  const b = BEATS[Math.min(i, BEATS.length - 1)], p = { beat: BEATS.indexOf(b), mode: b.mode };
+  p.scale = b.scale || 'show';   // a beat always starts from the show scale (an answer may have switched the table to true scale)
+  if (b.mode_opts) p.mode_opts = b.mode_opts;
+  post(p);
+}
+// the four big mode buttons still work alone; they also move the run of show to that mode's first beat
+function tapMode(m) { const b = BEATS[beatNow()]; post(b && b.mode === m ? { mode: m } : { mode: m, beat: firstBeat(m) }); }
+
+function renderShow() {
+  if (!BEATS.length) { $('notes').innerHTML = '<div class="none">No speaker notes (show-notes.json not found).</div>'; $('strip').innerHTML = ''; $('bn').textContent = ''; $('prev').disabled = $('next').disabled = true; return; }
+  const i = beatNow(), b = BEATS[i];
+  $('bn').textContent = `${i + 1} / ${BEATS.length}`;
+  $('prev').disabled = i === 0; $('next').disabled = i === BEATS.length - 1;
+  $('next').textContent = i === BEATS.length - 1 ? 'End of show' : 'Next: ' + BEATS[i + 1].title;
+  const strip = $('strip'); strip.innerHTML = '';
+  let g = null;   // one group per run of beats on the same mode, in show order
+  BEATS.forEach((x, k) => {
+    if (!g || g.m !== x.mode) { g = document.createElement('div'); g.m = x.mode; g.className = 'grp'; g.innerHTML = `<div class="g">${titleOf(x.mode)}</div><div class="chips"></div>`; strip.appendChild(g); }
+    const c = document.createElement('button'); c.className = 'chip' + (k === i ? ' on' : k < i ? ' done' : ''); c.textContent = k + 1; c.onclick = () => goBeat(k); g.lastChild.appendChild(c);
+  });
+  for (const e of strip.children) if (e.querySelector('.chip.on')) e.classList.add('on');
+  const key = i + '|' + show.mode + '|' + BEATS.length;
+  if (key === notesKey) return;
+  const first = notesKey.split('|')[0] !== String(i); notesKey = key;
+  const li = a => (a || []).map(x => `<li>${fmt(x)}</li>`).join('');
+  const nums = (b.numbers || []).map(numRow).join('');
+  const tag = show.mode !== b.mode ? `<div class="tag warn">Table shows ${titleOf(show.mode)}. Tap a beat to sync.</div>` : `<div class="tag">${titleOf(b.mode)}</div>`;
+  $('notes').innerHTML = `<h3>${fmt(b.title)}</h3>${tag}<h4>Do</h4><ul>${li(b.do)}</ul><h4>Say</h4><ul class="say">${li(b.say)}</ul>${nums ? `<h4>Numbers</h4><div class="num">${nums}</div>` : ''}`;
+  if (first) $('notes').scrollTop = 0;
+}
+const numRow = n => `<div><div class="k">${fmt(n.k)}</div><div class="v">${fmt(n.v)}</div>${n.src ? `<div class="s">${fmt(n.src)}</div>` : ''}</div>`;
+$('prev').onclick = () => goBeat(beatNow() - 1);
+$('next').onclick = () => goBeat(beatNow() + 1);
+document.addEventListener('keydown', e => { if (e.target.tagName === 'INPUT') return; if (e.key === 'ArrowRight') goBeat(beatNow() + 1); else if (e.key === 'ArrowLeft') goBeat(beatNow() - 1); });
+
+let openQ = -1;
+function renderQs() {
+  const f = $('qf').value.trim().toLowerCase(), box = $('ql'); box.innerHTML = '';
+  const hit = QS.map((q, k) => [q, k]).filter(([q]) => !f || f.split(/\s+/).every(w => (q.q + ' ' + (q.keys || '') + ' ' + q.a).toLowerCase().includes(w)));
+  if (!hit.length) box.innerHTML = '<div class="none">No match.</div>';
+  for (const [q, k] of hit) {
+    const d = document.createElement('div'); d.className = 'q' + (k === openQ ? ' on' : '');
+    d.innerHTML = `<button>${esc(q.q)}</button>`;
+    d.firstChild.onclick = () => { openQ = openQ === k ? -1 : k; renderQs(); };
+    if (k === openQ) {
+      const a = document.createElement('div'); a.className = 'a';
+      a.innerHTML = `<p>${fmt(q.a)}</p>` + ((q.numbers || []).length ? `<div class="num">${q.numbers.map(numRow).join('')}</div>` : '');
+      if (q.act) {
+        const b = document.createElement('button'); b.className = 'act'; b.textContent = q.act.label; b.style.marginTop = '8px';
+        b.onclick = () => { if (q.act.beat) goBeat(BEATS.findIndex(x => x.id === q.act.beat)); if (q.act.patch) post(q.act.patch); };
+        a.appendChild(b);
+      }
+      d.appendChild(a);
+    }
+    box.appendChild(d);
+  }
+}
+$('qf').oninput = () => { openQ = -1; renderQs(); };
+$('tabs').onclick = e => {
+  const t = e.target.dataset && e.target.dataset.t; if (!t) return;
+  for (const b of $('tabs').children) b.className = b.dataset.t === t ? 'on' : '';
+  $('p-ctl').hidden = t !== 'ctl'; $('qs').hidden = t !== 'qs';
+};
+fetch('show-notes.json').then(r => r.json()).then(j => { BEATS = j.beats || []; QS = j.questions || []; notesKey = ''; renderQs(); render(); }).catch(() => render());
+
 $('freeze').onclick = () => post({ freeze: !show.freeze });
 $('reset').onclick = () => post({ reset: true });
 if (HOST) $('adv').href = `http://${HOST}/control.html`;
@@ -142,7 +277,7 @@ function connect() {
   const es = new EventSource(BASE + '/events');
   es.onmessage = e => {
     const f = JSON.parse(e.data); lastMsg = Date.now();
-    if (f.show) { const sig = JSON.stringify(f.show); if (sig !== connect.sig) { connect.sig = sig; show = f.show; render(); } }
+    if (f.show) { const sig = JSON.stringify(f.show); if (sig !== connect.sig) { connect.sig = sig; setShow(f.show); } }
     const n = Object.keys(f.pieces || {}).length;
     $('st-pieces').innerHTML = `${n}<i>${Object.keys(f.pieces || {}).map(k => k.replace('seldon-', 'S')).join(' ')}</i>`;
     $('st-fps').innerHTML = `${f.fps}<i>fps${f.idle ? ' idle' : ''}${f.calibrated ? '' : ' uncalibrated'}</i>`;
