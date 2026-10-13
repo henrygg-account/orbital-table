@@ -32,10 +32,11 @@ export const SCALE = { true: true, leoMm: 70, geoShare: .6, p: .45, aM: 55, zone
 export const FIG = { E: 31, M: 22, S: 15 };
 export const FLOOR_ALT = { E: 400, M: 100 };
 export const MIN_SPAN = 60;                                       // mm of altitude scale kept even when the Moon is very close
-export const VEH = { dry: 200, prop: 160 };                   // kg: dry mass + propellant (full tank)
+import * as V from './vehicle.js';                              // the one set of vehicle numbers (all modes)
+export const VEH = { dry: V.SELDON.dry, prop: V.SELDON.prop };
 export const PROP_MODES = [
-  { id: 'ET', name: 'ELECTRIC', isp: 1000, thrust: .05, how: 'low-thrust spiral, engine on the whole way' },
-  { id: 'GT', name: 'CHEMICAL', isp: 425, thrust: 100, how: 'two burns (Hohmann transfer)' },
+  { id: 'ET', name: 'ELECTRIC', isp: V.SELDON.isp, thrust: V.SELDON.thrust, how: 'low-thrust spiral, engine on the whole way' },
+  { id: 'GT', name: 'CHEMICAL', isp: V.TUG.isp, how: 'two burns (Hohmann transfer)' },
 ];
 
 export function makeMaps(earth = LAYOUT.earth, moon = LAYOUT.moon, S = SCALE) {
@@ -122,9 +123,9 @@ const hoh = (mu, r1, r2) => { const a = (r1 + r2) / 2; return { a, v1t: Math.sqr
 const hypBurn = (mu, r, vinf) => Math.sqrt(vinf * vinf + 2 * mu / r) - vc(mu, r);   // circular orbit at r <-> hyperbolic with v_inf
 // time to wait until body 2 leads body 1 by the angle a transfer of duration tof needs
 const waitFor = (n1, th1, n2, th2, tof) => { const dn = n2 - n1; if (Math.abs(dn) < 1e-12) return 0; const d = wrap(Math.PI - n2 * tof - (th2 - th1)); return d < 1e-9 ? 0 : dn > 0 ? d / dn : (d - TAU) / dn; };
-export const propFor = (pm, dvKms) => (VEH.dry + VEH.prop) * (1 - Math.exp(-dvKms * 1000 / (G0 * pm.isp)));
-export const burnTime = (pm, mp) => mp / (pm.thrust / (G0 * pm.isp));
-export const dvMax = pm => G0 * pm.isp * Math.log((VEH.dry + VEH.prop) / VEH.dry) / 1000;   // km/s a full tank gives
+export const propFor = (pm, dvKms) => V.propFor(pm.isp, dvKms);
+export const burnTime = (pm, mp) => V.burnTime(mp, pm);
+export const dvMax = pm => V.dvMax({ ...V.SELDON, isp: pm.isp });   // km/s a full tank gives
 
 // a body on the table -> its orbit. Inside the Moon zone it orbits the Moon.
 export function bodyAt(maps, x, y) {
@@ -329,9 +330,9 @@ export function transfer(maps, a, b) {
     gt = { dv: Math.abs(h.v1t - vc(B.mu, a.r)) + Math.abs(vc(B.mu, b.r) - h.v2t), wait: tw, tof: h.tof };
     et = { dv: Math.abs(vc(B.mu, a.r) - vc(B.mu, b.r)) };
   } else if (legs === 'EM') {   // Earth orbit -> Hohmann out to the Moon's distance -> captured into Seldon-2's lunar orbit
-    const h = hoh(MU_E, a.r, D_EM), vinf = Math.abs(vc(MU_E, D_EM) - h.v2t), tw = waitFor(a.n, a.th, Mo.n, Mo.th, h.tof);
-    gt = { dv: Math.abs(h.v1t - vc(MU_E, a.r)) + hypBurn(MU_M, b.r, vinf), wait: tw, tof: h.tof };
-    et = { dv: Math.abs(vc(MU_E, a.r) - vc(MU_E, D_EM)) + (vc(MU_M, b.r) - vc(MU_M, R_SOI)) };
+    const h = hoh(MU_E, a.r, D_EM), L = V.lunarDv(a.r, b.r), tw = waitFor(a.n, a.th, Mo.n, Mo.th, h.tof);   // vehicle.js: shared with COMPETITOR
+    gt = { dv: L.gt, wait: tw, tof: h.tof };
+    et = { dv: L.et };
   } else {                      // lunar orbit -> escape -> Hohmann from the Moon's distance to Seldon-2's Earth orbit
     const h = hoh(MU_E, D_EM, b.r), vinf = Math.abs(h.v1t - vc(MU_E, D_EM));
     gt = { dv: hypBurn(MU_M, a.r, vinf) + Math.abs(vc(MU_E, b.r) - h.v2t), wait: 0, tof: h.tof };

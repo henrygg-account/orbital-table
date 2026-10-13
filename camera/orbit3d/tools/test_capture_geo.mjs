@@ -13,7 +13,6 @@ for (const defend of [false, true]) for (const [r1, r2, same] of [[7000, 7000, t
   }
 const P = G.plan({ r1: 7178, r2: 7178, th1: 0, th2: 1, same: true, dir: 'auto' });
 console.log('LEO 57deg ahead:', P.dir, 'N', P.N, 'dv', (P.dvCh * 1000).toFixed(1), 'm/s', 'T', (P.Ttot / 3600).toFixed(1), 'h gain', P.gain.toFixed(1));
-const cfg = { dry_kg: 200, us: { isp_s: 1000, accel_mm_s2: .5 }, them: { isp_s: 320 }, dro: { us: { dv: 6.7, days: 155.1 }, them: { dv: 3.45, days: 5.458 } } };
-for (const [n, r, p] of [['geo', 42164, 'geo'], ['dro', 384400, 'dro']]) { const c = G.compare(r, cfg, p); console.log(n, 'us', c.us.dv.toFixed(2), c.us.prop.toFixed(0), 'kg', (c.us.time / 86400).toFixed(0), 'd | them', c.them.dv.toFixed(2), c.them.prop.toFixed(0), 'kg', (c.them.time / 3600).toFixed(1), 'h'); }
+for (const [n, r, p] of [['geo', 42164, 'geo'], ['dro', 384400, 'dro']]) { const c = G.compare(r, p); console.log(n, 'us', c.us.dv.toFixed(2), c.us.prop.toFixed(0), 'kg', (c.us.time / 86400).toFixed(0), 'd | them', c.them.dv.toFixed(2), c.them.prop.toFixed(0), 'kg', (c.them.time / 3600).toFixed(1), 'h'); }
 ok(Math.abs(G.rOfRho(G.rhoOfR(30000)) - 30000) < 1, 'rho round trip');
 console.log(bad ? bad + ' failures' : 'ok'); if (typeof process !== 'undefined') process.exit(bad ? 1 : 0);   // also runs in a browser page (no node on the table's laptop)

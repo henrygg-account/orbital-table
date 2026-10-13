@@ -63,24 +63,13 @@ function invWarp(rho, b, push) {
 }
 
 const OGEO = await import('./orbits-geo.js?v=' + Date.now());   // orbits view geometry + maths (cache-bust like demo.html's import)
+import * as V from './vehicle.js';                                // the one set of vehicle numbers (Isp, thrust, dry mass)
 const CGEO = await import('./capture-geo.js?v=' + Date.now());  // CAPTURE / DEFEND + COMPETITOR plans (Kepler maths, tools/test_capture_geo.html)
 
-// ---- COMPETITOR: every number the mode shows comes from this block. Edit here.
+// ---- COMPETITOR: the vehicle and tug numbers (Isp, thrust, dry mass) live in vehicle.js, one set for every mode. Edit them there.
 const COMP = {
-  dry_kg: 200,                                   // same dry mass for both: the Seldon vehicle's 200 kg (orbits-geo.js VEH.dry)
-  us: {
-    name: 'SELDON · ELECTRIC',
-    isp_s: 1000,                                 // orbits-geo.js PROP_MODES ET (electric, 1000 s)
-    accel_mm_s2: 0.5,                            // tools/spiral_mission.py default thrust acceleration; gives data/mission_dro.json's 155 d for 6.7 km/s (50 mN on 200 kg is 0.25 here)
-  },
-  them: {
-    name: 'TYPICAL CHEMICAL TUG',
-    isp_s: 320,                                  // brief: generic bipropellant tug, Isp ~320 s; burns are impulsive so thrust does not matter
-  },
-  dro: {                                         // the LEO -> DRO preset uses the mission files, not circle-to-circle maths
-    us: { dv: 6.70, days: 155.1 },               // data/mission_dro.json: total_dv_kms 6.7002, transfer_days 155.1
-    them: { dv: 3.45, days: 5.458 },             // data/mission_dro.chemical.json: total_dv_kms 3.45, transfer_days 5.458
-  },
+  us: { name: V.SELDON.name },
+  them: { name: V.TUG.name },
   snapGeoMm: 14,                                 // a Seldon this close (mm) to the GEO ring locks the target to GEO
   colThem: 0xa592f0,                             // the competitor's colour: brand violet, lightened to read on ink (not the alarm red)
 };
@@ -1455,7 +1444,7 @@ export function createModes(ctx) {
   // The transfer is drawn from where the Seldon is to GEO / the DRO. Scale 'true' (setScale): Earth and the Moon at true relative
   // size at fixed spots, their pieces ignored; only the Seldons move.
   Object.assign(STYLES, { oBody: { c: C.fog200, w: 1.2, op: .9 } });
-  const GD = { geoBand: 40, droKm: 36000, was: [false, false] };   // geoBand: mm of ring distance; droKm: size of the DRO drawn
+  const GD = { geoBand: 40, droKm: V.DRO_KM, was: [false, false] };   // geoBand: mm of ring distance; droKm: size of the DRO drawn
   let scaleMode = 'show';
   const fixedEM = () => ({ earth: { x_mm: 150, y_mm: SH() / 2 }, moon: { x_mm: SW() - 190, y_mm: SH() / 2 } });   // room for GEO left of Earth, the DRO right of the Moon, and the "True scale" label at the end
   // geo / dro share the rails language with capture and competitor: mint = our path, white = the target, fog dashed = references
@@ -1718,7 +1707,7 @@ export function createModes(ctx) {
     if (key !== KP.key) KP.S = null;
     const f = filmClock(KP, key, moving, dt, CMP_LEAD, O.speed, CMP_HOLD);
     if (!KP.S) {                                                       // build the paths once per placement
-      const rho = CGEO.rhoOfR, rho0 = rho(CGEO.R_LEO), rhoT = rho(rT), cmp = CGEO.compare(rT, COMP, preset);
+      const rho = CGEO.rhoOfR, rho0 = rho(CGEO.R_LEO), rhoT = rho(rT), cmp = CGEO.compare(rT, preset);
       const mm = cmmAt(ex, ey, rho), S = { cmp, rhoT, rho0, th0 };
       // ours: schematic spiral, evenly spaced in the table's radius; ends a touch before the competitor's arrival point so the dots do not overlap
       const turns = Math.max(1, Math.min(5, Math.floor((rhoT - rho0) / 10))) + .5, v0 = Math.sqrt(CGEO.MU / CGEO.R_LEO), v1 = Math.sqrt(CGEO.MU / rT);

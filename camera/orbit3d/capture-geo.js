@@ -1,7 +1,7 @@
 // capture-geo.js — maths for the CAPTURE / DEFEND and COMPETITOR modes (no DOM; checked by tools/test_capture_geo.mjs).
 // Two-body (Earth) coplanar orbits, counter-clockwise, impulsive burns. Lengths km, times s, angles rad (ccw, y up).
-
-export const MU = 398600.4418, R_E = 6378.1, R_LEO = R_E + 400, R_GEO = 42164, L_KM = 384400, G0 = 9.80665;
+import * as V from './vehicle.js';   // one set of vehicle numbers for every mode
+export const MU =398600.4418, R_E = 6378.1, R_LEO = R_E + 400, R_GEO = 42164, L_KM = 384400, G0 = 9.80665;
 const TAU = Math.PI * 2;
 export const wrap = a => { a %= TAU; return a < 0 ? a + TAU : a; };
 
@@ -128,18 +128,13 @@ export function simTime(P, u) {
 }
 
 // ---- COMPETITOR: the same trip, an electric spiral against an impulsive chemical transfer
-// cfg: see COMP in modes.js. preset 'dro' uses the LEO -> DRO mission figures instead of the circular-orbit maths.
-export function compare(rT, cfg, preset) {
-  const r0 = R_LEO, v0 = Math.sqrt(MU / r0), v1 = Math.sqrt(MU / rT), dry = cfg.dry_kg;
-  const prop = (dv, isp) => dry * (Math.exp(dv * 1000 / (isp * G0)) - 1);              // rocket equation for the same dry mass
+// Vehicle numbers: vehicle.js (shared with LEO TO GEO / LEO TO DRO). preset 'dro' targets the table's default DRO (V.DRO_KM).
+export function compare(rT, preset) {
+  const r0 = R_LEO, v0 = Math.sqrt(MU / r0), v1 = Math.sqrt(MU / rT);
   let us, them;
-  if (preset === 'dro' && cfg.dro) {
-    us = { dv: cfg.dro.us.dv, time: cfg.dro.us.days * 86400 }; them = { dv: cfg.dro.them.dv, time: cfg.dro.them.days * 86400 };
-  } else {
-    const dvU = Math.abs(v0 - v1), h = hohmann(r0, rT);
-    us = { dv: dvU, time: dvU * 1000 / (cfg.us.accel_mm_s2 * 1e-3) };                  // s: Edelbaum, circle to circle, constant tangential acceleration (dv m/s over a m/s^2)
-    them = { dv: h.total, time: h.tof };
-  }
-  us.prop = prop(us.dv, cfg.us.isp_s); them.prop = prop(them.dv, cfg.them.isp_s);
+  if (preset === 'dro') { const L = V.lunarDv(r0, V.DRO_KM); us = { dv: L.et }; them = { dv: L.gt, time: L.gtTof }; }
+  else { const h = hohmann(r0, rT); us = { dv: Math.abs(v0 - v1) }; them = { dv: h.total, time: h.tof }; }
+  us.prop = V.propFor(V.SELDON.isp, us.dv); them.prop = V.propFor(V.TUG.isp, them.dv);
+  us.time = V.burnTime(us.prop);                                                       // s: that propellant at the engine's mass flow
   return { us, them, saved: them.prop - us.prop, ratio: them.prop / us.prop };
 }
