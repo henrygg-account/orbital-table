@@ -138,12 +138,15 @@ const SKIES = [['still', 'Still'], ['slow', 'Slow'], ['off', 'Off']];
 // Per-mode options, rendered from this table. type: seg (choices [value, label]) | toggle | range (min, max, step, unit);
 // `when(opts)` hides a control. Values go to show.mode_opts[mode][id]; the modes read them in modes.setOpts(mode, opts).
 const OPTS = {
-  geo: [{ id: 'lock_geo', label: 'Satellite near GEO', type: 'seg', def: 'lock', choices: [['lock', 'Lock to GEO'], ['free', 'Free']] }],
-  capture: [{ id: 'scenario', label: 'Scenario', type: 'seg', def: 'defend', choices: [['defend', 'Defend'], ['pursue', 'Pursue']] }],
-  dro: [{ id: 'trail', label: 'Path', type: 'seg', def: 'full', choices: [['full', 'Full path'], ['next', 'Next burn only']] }],
+  geo: [{ id: 'band_mm', label: 'Lock-to-GEO band', type: 'range', def: 40, min: 10, max: 120, step: 5, unit: 'mm' }],
+  capture: [
+    { id: 'scenario', label: 'Scenario', type: 'seg', def: 'capture', choices: [['capture', 'Capture'], ['defend', 'Defend'], ['phasing-up', 'Phasing up'], ['phasing-down', 'Phasing down'], ['transfer', 'Transfer']] },
+    { id: 'speed', label: 'Film length', type: 'range', def: 30, min: 10, max: 90, step: 5, unit: 's' },
+  ],
+  dro: [{ id: 'dro_km', label: 'DRO size', type: 'range', def: 36000, min: 5000, max: 60000, step: 1000, unit: 'km' }],
   competitor: [
-    { id: 'target', label: 'Target altitude', type: 'seg', def: 'GEO', choices: [['GEO', 'GEO'], ['DRO', 'DRO'], ['custom', 'Custom']] },
-    { id: 'alt_km', label: 'Custom altitude', type: 'range', def: 20000, min: 500, max: 40000, step: 500, unit: 'km', when: o => o.target === 'custom' },
+    { id: 'target', label: 'Target', type: 'seg', def: 'auto', choices: [['auto', 'By Seldon'], ['geo', 'GEO'], ['dro', 'DRO'], ['altitude', 'Altitude']] },
+    { id: 'alt_km', label: 'Altitude', type: 'range', def: 20000, min: 500, max: 40000, step: 500, unit: 'km', when: o => o.target === 'altitude' },
   ],
 };
 

@@ -529,7 +529,7 @@ export function createModes(ctx) {
   const shade = (() => { const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), shadeMat); m.position.z = -4; m.visible = false; scene.add(m); return add('chrome', 'mesh', m, 1); })();
   const FLOOR_STR = { mission: 0, intercept: 0, dvmap: 1 };   // the floor exists only in the map
   const usable = m => MODE_NAMES.includes(m) && !ARCHIVED.has(m);
-  let current = usable(ctx.initialMode) ? ctx.initialMode : 'orbits';   // the kiosk view by default; ?mode=engage|dvmap|mission reopens the others
+  let current = usable(ctx.initialMode) ? ctx.initialMode : 'geo';   // LEO TO GEO by default (the four main modes: geo, capture, dro, competitor); ?mode=orbits|engage|dvmap|mission reopens the old ones
   let topo = ctx.topo !== false;                              // delta-v topography (floor, rings, labels) on/off; the chip drives it
   let budget = DV_MAX, budgetS = DV_MAX;                      // slider value (km/s from Seldon-1) and its smoothed copy
   const grp = () => GROUP[current] || current;                  // the group the current mode draws with
@@ -1261,21 +1261,21 @@ export function createModes(ctx) {
   const fmtTp = s => s >= 730 * 86400 ? [(s / 31557600).toFixed(1), 'years'] : s >= 2 * 86400 ? [(s / 86400).toFixed(1), 'days'] : s >= 3600 ? [(s / 3600).toFixed(1), 'h'] : [String(Math.max(1, Math.round(s / 60))), 'min'];
   const fmtT = s => { const [v, u] = fmtTp(s); return `${v}<i>${u}</i>`; };
   // tags: kept on screen and nudged apart so they never overprint each other
-  let tagRects = [];
+  let tagRects = [], TAG_TOP = MARG, TAG_BOT = MARG + ORB_FOOT, TAG_FLIP = false;   // the band tags stay in (mm from each edge); FLIP: face the nearest long edge (geo, dro)
   const TAG_CH = .62;                                          // Space Mono advance (.6 em) + a little tracking, per character
   const plainLen = html => html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').length;
   function tagAt(it, html, x, y, em = 9.5) {
     setText(it, html);
     const w = plainLen(html) * em * TAG_CH + 10, h = em * 1.6;
     x = Math.max(MARG + w / 2, Math.min(SW() - MARG - w / 2, x));
-    y = Math.max(MARG + h / 2, Math.min(SH() - MARG - ORB_FOOT, y));
+    y = Math.max(TAG_TOP + h / 2, Math.min(SH() - TAG_BOT, y));
     for (let k = 0; k < 12; k++) {
       const hit = tagRects.find(r => Math.abs(r.x - x) < (r.w + w) / 2 && Math.abs(r.y - y) < (r.h + h) / 2 + 2);
       if (!hit) break;
       y = hit.y + (y >= hit.y ? 1 : -1) * ((hit.h + h) / 2 + 3);
     }
     tagRects.push({ x, y, w, h });
-    place(it, x, y, 'cm', 0);
+    place(it, x, y, 'cm', TAG_FLIP ? faceRot(y) : 0);
   }
   // the physical pieces (tracked centre + footprint radius, mm, incl. the Seldons' panels): labels never sit on one.
   // Seldon span ~100 mm measured in the camera image (Oct 7); Earth ~70 mm.
@@ -1290,7 +1290,7 @@ export function createModes(ctx) {
     setText(it, html);
     const w = plainLen(html) * em * TAG_CH + 10, h = em * 1.6, a0 = Math.atan2(uy, ux);
     const own = pieceObs.find(o => o.x === px && o.y === py) || { x: px, y: py, r: 30 };
-    const ok = (x, y) => x - w / 2 >= MARG && x + w / 2 <= SW() - MARG && y - h / 2 >= MARG && y + h / 2 <= SH() - MARG - ORB_FOOT && offPieces(x, y, w, h)
+    const ok = (x, y) => x - w / 2 >= MARG && x + w / 2 <= SW() - MARG && y - h / 2 >= TAG_TOP && y + h / 2 <= SH() - TAG_BOT && offPieces(x, y, w, h)
       && !tagRects.some(r => Math.abs(r.x - x) < (r.w + w) / 2 + 2 && Math.abs(r.y - y) < (r.h + h) / 2 + 2);
     const at = deg => {                                        // nearest spot along this direction that clears the piece itself
       const a = a0 + deg * Math.PI / 180, cx = Math.cos(a), cy = Math.sin(a);
@@ -1300,7 +1300,7 @@ export function createModes(ctx) {
     const order = slot.deg != null ? [slot.deg, ...TAG_FAN.filter(d => d !== slot.deg)] : TAG_FAN;
     for (const deg of order) {
       const [x, y] = at(deg);
-      if (ok(x, y)) { slot.deg = deg; tagRects.push({ x, y, w, h }); place(it, x, y, 'cm', 0); return; }
+      if (ok(x, y)) { slot.deg = deg; tagRects.push({ x, y, w, h }); place(it, x, y, 'cm', TAG_FLIP ? faceRot(y) : 0); return; }
     }
     slot.deg = null; const [x, y] = at(0); tagAt(it, html, x, y, em);   // nowhere clean: the old rule (clamped, nudged off other labels)
   }
@@ -1310,7 +1310,7 @@ export function createModes(ctx) {
     setPts(line, circPts(E.cx, E.cy, rho, 192));
     for (const deg of [118, 62, 242, 298, 180, 0]) {
       const a = deg * Math.PI / 180, x = E.cx + rho * Math.cos(a), y = E.cy - rho * Math.sin(a);
-      if (x > MARG + 30 && x < SW() - MARG - 30 && y > MARG + 12 && y < SH() - MARG - ORB_FOOT - 6 && offPieces(x, y, plainLen(name) * 8 * TAG_CH + 10, 8 * 1.6)) { tagAt(lbl, name, x, y, 8); return; }
+      if (x > MARG + 30 && x < SW() - MARG - 30 && y > TAG_TOP + 12 && y < SH() - TAG_BOT - 6 && offPieces(x, y, plainLen(name) * 8 * TAG_CH + 10, 8 * 1.6)) { tagAt(lbl, name, x, y, 8); return; }
     }
     hide(lbl);
   }
@@ -1345,11 +1345,11 @@ export function createModes(ctx) {
     }
     return out.length > 1 ? out : [pts[0], pts[0]];
   };
-  function updTransfer(maps, a, b, dt, moving, fromTo) {
-    const T = OR.tr, xk = a && b ? [maps.E.cx, maps.E.cy, maps.M?.cx, maps.M?.cy, a.rho, a.th, b.rho, b.th, maps.k * 1e4].map(v => (v ?? 0).toFixed(3)).join() : null;
-    if (T.xk !== xk) { T.xk = xk; T.X = xk && OGEO.transfer(maps, a, b); }
+  function updTransfer(maps, a, b, dt, moving, fromTo, G) {   // G: the geo / dro look (our electric path only, mint, numbers on the rails)
+    const T = G ? OR.trG : OR.tr, ks = G ? ['et'] : ['gt', 'et'], xk = a && b ? [maps.E.cx, maps.E.cy, maps.M?.cx, maps.M?.cy, a.rho, a.th, b.rho, b.th, maps.k * 1e4].map(v => (v ?? 0).toFixed(3)).join() : null;
+    if (T.xk !== xk) { T.xk = xk; OGEO.LOOPS.etMax = G === 'dro' ? 1 : G ? 2 : 6; T.X = xk && OGEO.transfer(maps, a, b); }   // geo / dro: fewer loops, one clean path
     const X = T.X;
-    const its = [T.gt, T.et, T.gtF, T.etF, T.gtA, T.etA, T.gtC, T.etC];
+    const its = ks.flatMap(k => [T[k], T[k + 'F'], T[k + 'A'], T[k + 'C']]);
     if (!X) { hide(...its, T.read); T.key = null; T.draw = 0; return; }
     if (moving) { hide(...its); T.draw = 0; T.key = null; T.still = 0; }
     else { T.still = (T.still ?? 0) + dt; if (T.still >= TR_WAIT_S) T.draw = Math.min(1, (T.draw ?? 0) + dt / TR_DRAW_S); }
@@ -1358,7 +1358,7 @@ export function createModes(ctx) {
     const key = [maps.E.cx, maps.E.cy, maps.M?.cx, maps.M?.cy, a.rho, a.th, b.rho, b.th].map(v => (v ?? 0).toFixed(2)).join();
     if (T.key !== key) {
       T.key = key;
-      for (const [k, r] of [['gt', X.gt], ['et', X.et]]) {
+      for (const [k, r] of [['gt', X.gt], ['et', X.et]].filter(([k]) => ks.includes(k))) {
         const nl = r.lead.length, pts = [...r.lead, ...r.path.flat()], n = pts.length, tip = pts[n - 1];   // coast to the first burn, then the transfer
         let j = n - 2; while (j > 0 && Math.hypot(pts[j][0] - tip[0], pts[j][1] - tip[1]) < 6) j--;   // direction over the last 6 mm
         const ux = tip[0] - pts[j][0], uy = tip[1] - pts[j][1], ul = Math.hypot(ux, uy) || 1, dx = ux / ul, dy = uy / ul, L = 7, Wd = 4;
@@ -1370,7 +1370,7 @@ export function createModes(ctx) {
     if (moving || waiting) hide(...its);                        // nothing while a piece moves or until the pause is over (setPts above turns arrowheads on)
     else if (!moving) {
       const f = trEase(T.draw), done = T.draw >= 1;
-      for (const k of ['gt', 'et']) {
+      for (const k of ks) {
         const P = T[k + 'P'];
         if (T[k + 'Drawn'] !== f) {
           const pre = done ? P.pts : prefix(P.pts, P.cum, f), nl = P.nl;   // drawn out along the coast first, then the transfer
@@ -1382,6 +1382,7 @@ export function createModes(ctx) {
         T[k + 'A'].on = done;
       }
     }
+    if (G) return;                                              // geo / dro read the numbers off the rails
     // one table: engine | delta-v | fuel, then the route it is for underneath (names in their orbit colours)
     const row = (id, r) => { const pm = OGEO.PROP_MODES.find(m => m.id === id);
       return `<span class="xk" style="color:${hex(OC[id.toLowerCase()])}">${id}</span><span class="xn">${pm.name}</span>`
@@ -1399,8 +1400,8 @@ export function createModes(ctx) {
   function updOrbits(P, dt) {
     if (grp() === 'orbits') OR.v = current;                       // the variant on screen (kept while this group fades out)
     if (OR.v && OR.v !== 'orbits') return updGD(P, dt, OR.v);
-    hide(...gdOnly()); OR.ring[1].dim = 1;
-    tagRects = [];
+    hide(...gdOnly(), OR.trG.et, OR.trG.etA, OR.trG.etC); OR.trG.key = null; OR.ring[1].dim = 1;
+    tagRects = []; TAG_TOP = MARG; TAG_BOT = MARG + ORB_FOOT; TAG_FLIP = false;
     pieceObs = Object.entries(P).filter(([k]) => PIECE_R[k]).map(([k, p]) => ({ x: p.x_mm, y: p.y_mm, r: PIECE_R[k] + TAG_GAP }));
     const zs = Object.values(OR.z), all = [...OR.ring, ...OR.dot, ...OR.tag, OR.soi, OR.leo, OR.leoL, OR.geo, OR.geoL, OR.foot, OR.tr.gt, OR.tr.et, OR.tr.gtF, OR.tr.etF, OR.tr.gtA, OR.tr.etA, OR.tr.gtC, OR.tr.etC, OR.tr.read, ...zs];
     const onTable = p => p && p.x_mm >= 0 && p.x_mm <= SW() && p.y_mm >= 0 && p.y_mm <= SH();
@@ -1457,20 +1458,25 @@ export function createModes(ctx) {
   const GD = { geoBand: 40, droKm: 36000, was: [false, false] };   // geoBand: mm of ring distance; droKm: size of the DRO drawn
   let scaleMode = 'show';
   const fixedEM = () => ({ earth: { x_mm: 150, y_mm: SH() / 2 }, moon: { x_mm: SW() - 190, y_mm: SH() / 2 } });   // room for GEO left of Earth, the DRO right of the Moon, and the "True scale" label at the end
+  // geo / dro share the rails language with capture and competitor: mint = our path, white = the target, fog dashed = references
+  Object.assign(STYLES, { gOur: { c: C.mint, w: 1.8, op: .6 }, gRoute: { c: C.mint, w: 2.7, op: 1, grad: true }, gRouteA: { c: C.mint, w: 2.7, op: 1 }, gRouteC: { c: C.mint, w: 1.8, op: .55, dash: 1.2, gap: 3.5 } });
+  OR.trG = { et: mkLine('orbits', 'gRoute'), etA: mkLine('orbits', 'gRouteA'), etC: mkLine('orbits', 'gRouteC'), key: null };   // the same transfer state as OR.tr, drawn our way
+  const GX = { ring: [mkLine('orbits', 'gOur'), mkLine('orbits', 'target')], dot: [mkDot('orbits', C.mint, 2.2, 1), mkDot('orbits', C.white, 2.2, 1)],
+    tag: [mkText('orbits', 'mt-label'), mkText('orbits', 'mt-label')], foot: [mkText('orbits', 'mt-foot', 1), mkText('orbits', 'mt-foot', 1)] };
   OR.msg = mkText('orbits', 'mt-tag'); OR.ts = mkText('orbits', 'mt-tag dim');
   OR.disc = [mkDot('orbits', 0x244b63, 1, 1), mkDot('orbits', C.fog300, 1, .9)];
   OR.discL = [mkLine('orbits', 'oBody'), mkLine('orbits', 'oBody')]; OR.discT = [mkText('orbits', 'mt-tag dim'), mkText('orbits', 'mt-tag dim')];
-  const gdOnly = () => [OR.msg, OR.ts, ...OR.disc, ...OR.discL, ...OR.discT];
+  const gdOnly = () => [OR.msg, OR.ts, ...OR.disc, ...OR.discL, ...OR.discT, ...GX.ring, ...GX.dot, ...GX.tag, ...GX.foot];   // (updTransfer keeps OR.trG itself)
   const trItems = () => ['gt', 'et', 'gtF', 'etF', 'gtA', 'etA', 'gtC', 'etC', 'read'].map(k => OR.tr[k]);   // (updTransfer keeps these itself)
   const orAll = () => [...OR.ring, ...OR.dot, ...OR.tag, OR.soi, OR.leo, OR.leoL, OR.geo, OR.geoL, OR.foot, ...Object.values(OR.z), ...gdOnly()];
   function updGD(P, dt, mode) {
-    const geo = mode === 'geo', TS = scaleMode === 'true', FX = fixedEM();
-    hide(...orAll()); tagRects = [];
+    const geo = mode === 'geo', TS = scaleMode === 'true', FX = fixedEM(), EYE = MODE_TITLES[MODE_NAMES.indexOf(mode)];
+    hide(...orAll(), ...trItems()); OR.tr.key = null; tagRects = [];   // (the old orbits view redraws its paths when it comes back)
+    TAG_TOP = TAG_BOT = MARG + RAIL_H + 16; TAG_FLIP = true;       // labels stay between the rails (and their "Not to scale." lines) and face the nearest long edge
     const E = TS ? FX.earth : P.earth, Mo = TS ? FX.moon : geo ? null : P.moon;
     const ids = ['seldon-1', 'seldon-2'].filter(id => P[id]).slice(0, geo ? 2 : 1);   // dro: one Seldon (Seldon-1 if both are seen)
     const msg = !E || (!geo && !Mo) ? msgFor(E, Mo, !geo) : !ids.length ? 'Place Seldon-1.' : '';
-    if (msg) { setText(OR.msg, msg); place(OR.msg, SW() / 2, SH() / 2, 'cm', 0); }
-    if (!E || (!geo && !Mo)) { hide(...trItems()); OR.tr.xk = OR.tr.key = null; return; }
+    if (!E || (!geo && !Mo)) { setRails(mode, { eyebrow: EYE, msg }); hide(OR.trG.et, OR.trG.etA, OR.trG.etC); OR.tr.xk = OR.tr.key = OR.trG.xk = OR.trG.key = null; return; }
     const e = [E.x_mm, E.y_mm], maps = TS ? OGEO.makeTrueMaps(e, [Mo.x_mm, Mo.y_mm], { noZone: geo }) : geo ? OGEO.makeGeoMaps(e) : OGEO.makeMaps(e, [Mo.x_mm, Mo.y_mm]);
     pieceObs = ids.map(id => ({ x: P[id].x_mm, y: P[id].y_mm, r: PIECE_R[id] + TAG_GAP }));
     if (TS) {   // Earth and the Moon drawn at true relative size (the 3D stand-ins are hidden by the page)
@@ -1489,46 +1495,62 @@ export function createModes(ctx) {
       GD.was[k] = !!b.locked; return b;
     });
     for (const k of [0, 1]) if (!ids.some(id => kOf(id) === k)) GD.was[k] = false;
-    // reference rings
+    // reference rings (fog, dashed)
     if (geo || TS) refRing(OR.geo, OR.geoL, maps, OGEO.R_GEO, 'GEO');
     if (geo && maps.E.rho(OGEO.R_GEO) - maps.E.rho(OGEO.R_LEO) >= LEO_GAP) refRing(OR.leo, OR.leoL, maps, OGEO.R_LEO, 'LEO');
     // the way on: from the first Seldon to the second (geo) or to GEO / the DRO (nothing if it is there already)
     const a = bodies[0]; let b = bodies[1], to = null;
     if (a && !b && !a.locked) { b = OGEO.targetBody(maps, a, geo ? 'E' : 'M', geo ? OGEO.R_GEO : GD.droKm); to = geo ? 'GEO' : 'DRO'; }
-    if (TS) { setText(OR.ts, 'True scale'); place(OR.ts, END === 'right' ? SW() - MARG - 4 : MARG + 4, SH() / 2, 'cm', boxRot); }
-    else { setText(OR.foot, 'Not to scale'); place(OR.foot, SW() / 2, SH() - MARG - 4, 'cm', 0); }
-    updTransfer(maps, a, b, dt, ids.some(id => P[id].moving) || (!TS && !!(P.earth?.moving || (!geo && P.moon?.moving))), a && b ? [ids[0].toUpperCase(), to || ids[1].toUpperCase()] : null);
-    // orbit rings and the dots riding them (one lap of the fastest Seldon in ORB_LAP seconds)
+    const toName = to || (b && b.locked ? (geo ? 'GEO' : 'DRO') : ids[1] && ids[1].toUpperCase());
+    footNote(GX.foot, TS ? 'True scale.' : 'Not to scale.');
+    updTransfer(maps, a, b, dt, ids.some(id => P[id].moving) || (!TS && !!(P.earth?.moving || (!geo && P.moon?.moving))), null, mode);
+    // orbit rings and the dots riding them (one lap of the fastest Seldon in ORB_LAP seconds): ours mint, the target white
     const moonB = !geo && maps.M && OGEO.moonBody(maps), nmax = Math.max(...bodies.map(x => x.n), moonB ? moonB.n : 0), rate = TAU / (nmax * ORB_LAP);
-    const ride = (k, x) => {
-      setPts(OR.ring[k], OGEO.orbitPts(x, 256).map(p => W(p[0], p[1])));
+    const ride = (k, x, ring, dot) => {
+      setPts(ring, OGEO.orbitPts(x, 256).map(p => W(p[0], p[1])));
       if (OR.last[k] === null || Math.abs(wrapPi(x.th - OR.last[k])) > 1e-3) OR.ang[k] = x.th;   // the piece moved (or was reset): the dot restarts from it
       OR.last[k] = x.th; OR.ang[k] += x.dir * x.n * rate * dt;
-      const q = OGEO.orbitXY(x, OR.ang[k]); OR.dot[k].obj.position.set(q[0], -q[1], 1); OR.dot[k].on = true;
+      const q = OGEO.orbitXY(x, OR.ang[k]); dot.obj.position.set(q[0], -q[1], 1); dot.on = true;
     };
-    if (moonB) ride(2, moonB); else OR.last[2] = null;
+    if (moonB) ride(2, moonB, OR.ring[2], OR.dot[2]); else OR.last[2] = null;
     bodies.forEach((x, k) => {
-      ride(k, x);
-      const T = TAU / x.n, p = P[ids[k]], col = hex(k ? OC.s2 : OC.s1), where = x.locked ? (geo ? 'GEO' : 'DRO') + (geo ? '' : ' · ' + kmTxt(x.r - x.B.R)) : kmTxt(x.r - x.B.R);
-      tagBeside(OR.tag[k], `<span style="color:${col}">${ids[k].toUpperCase()}</span> &nbsp;${where} · ${fmtT(T)} period`, p.x_mm, p.y_mm, p.x_mm - x.B.cx || 1, p.y_mm - x.B.cy, OR.slot[k]);
+      ride(k, x, GX.ring[k], GX.dot[k]);
+      const T = TAU / x.n, p = P[ids[k]], col = k ? '#f6f8f8' : '#0ee3a6', where = x.locked ? (geo ? 'GEO' : 'DRO') + (geo ? '' : ' · ' + kmTxt(x.r - x.B.R)) : kmTxt(x.r - x.B.R);
+      tagBeside(GX.tag[k], `<span style="color:${col}">${ids[k].toUpperCase()}</span> &nbsp;${where} · ${fmtT(T)} period`, p.x_mm, p.y_mm, p.x_mm - x.B.cx || 1, p.y_mm - x.B.cy, OR.slot[k], 8.6);
     });
     for (let k = bodies.length; k < 2; k++) OR.last[k] = null;
-    if (a && b && to === 'DRO') {   // the DRO it is heading for, labelled where it is farthest from Earth
-      setPts(OR.ring[1], OGEO.orbitPts(b, 256).map(p => W(p[0], p[1]))); OR.ring[1].dim = .6;
-      const q = maps.M.xy(b.rho, maps.thM); tagAt(OR.tag[1], 'DRO', q[0], q[1], 8);
-    } else OR.ring[1].dim = 1;
+    if (a && b && to) {   // the orbit it is heading for (white); the DRO is labelled where it is farthest from Earth
+      setPts(GX.ring[1], OGEO.orbitPts(b, 256).map(p => W(p[0], p[1])));
+      if (to === 'DRO') { const q = maps.M.xy(b.rho, maps.thM); tagAt(GX.tag[1], `<span style="color:#f6f8f8">DRO</span>`, q[0], q[1], 8); }
+    }
+    // rails: hero = DELTA-V of our electric transfer, then FUEL, TIME and where it ends
+    const X = OR.trG.X, et = X && X.et;
+    if (msg) setRails(mode, { eyebrow: EYE, msg });
+    else if (a && b && et) {
+      const dv = et.dv, alt = b.prim === 'M' ? ['DRO RADIUS', kmTxt(b.r)] : ['ALTITUDE', kmTxt(b.r - b.B.R)];
+      setRails(mode, { eyebrow: `${EYE} · ${ids[0].toUpperCase()} TO ${toName}`, hero: dv < 1 ? String(Math.round(dv * 1000)) : num(dv), unit: dv < 1 ? 'm/s delta-v' : 'km/s delta-v',
+        mets: [['FUEL', `${Math.round(et.mp)}<i>kg</i>`], ['TIME', fmtT(et.t)], alt] });
+    } else setRails(mode, { eyebrow: `${EYE} · ${ids[0].toUpperCase()}`, hero: '0', unit: 'km/s delta-v', mets: [['STATUS', geo ? 'IN GEO' : 'IN THE DRO']] });
   }
-  function setScale(s) { scaleMode = s === 'true' ? 'true' : 'show'; OR.tr.xk = null; }
+  function setScale(s) { scaleMode = s === 'true' ? 'true' : 'show'; OR.tr.xk = OR.trG.xk = null; }
   function setOptsOrbits(m, o = {}) {
     const num = (v, lo, hi) => Math.max(lo, Math.min(hi, +v));
     if (m === 'geo' && o.band_mm != null) GD.geoBand = num(o.band_mm, 10, 120);
     if (m === 'dro' && o.dro_km != null) GD.droKm = num(o.dro_km, 5000, 60000);
-    OR.tr.xk = null;
+    OR.tr.xk = OR.trG.xk = null;
   }
-  function reset() { OR.last = [null, null, null]; Object.assign(OR.tr, { draw: 0, still: 0, key: null }); }   // dots restart from their pieces, the transfer is drawn out again
+  function reset() { OR.last = [null, null, null]; for (const T of [OR.tr, OR.trG]) Object.assign(T, { draw: 0, still: 0, key: null }); }   // dots restart from their pieces, the transfer is drawn out again
   // demo stand-ins for geo / dro (what the camera would see); `given` names the pieces the URL already placed
   function gdDemo(mode, pc, given = []) {
     const TS = scaleMode === 'true', out = {}, use = k => !given.includes(k), at = (B, rho, deg) => { const t = deg * Math.PI / 180; return { x_mm: B.cx + rho * Math.cos(t), y_mm: B.cy - rho * Math.sin(t), seen_ago: 0 }; };
+    if (mode === 'capture' || mode === 'competitor') {            // Earth at the centre, no Moon; the Seldons sit where the film makes sense
+      const e = given.includes('earth') && pc.earth ? pc.earth : { x_mm: SW() / 2, y_mm: SH() / 2 }, A = (rho, deg) => at({ cx: e.x_mm, cy: e.y_mm }, rho, deg);
+      if (use('earth')) out.earth = { x_mm: e.x_mm, y_mm: e.y_mm, seen_ago: 0 };
+      if (use('moon')) out.moon = null;
+      if (mode === 'capture') { if (use('s1')) out['seldon-1'] = A(150, 30); if (use('s2')) out['seldon-2'] = A(150, 90); }   // two Seldons on one orbit, 60 degrees apart
+      else { if (use('s1')) out['seldon-1'] = A(CGEO.RHO.geo - 8, 40); if (use('s2')) out['seldon-2'] = null; }   // one Seldon just inside GEO: the target locks to it
+      return out;
+    }
     if (mode === 'geo') {
       const e = TS ? fixedEM().earth : pc.earth && given.includes('earth') ? pc.earth : { x_mm: SW() / 2, y_mm: SH() / 2 }, maps = TS ? OGEO.makeTrueMaps([e.x_mm, e.y_mm], [fixedEM().moon.x_mm, e.y_mm], { noZone: true }) : OGEO.makeGeoMaps([e.x_mm, e.y_mm]);
       if (use('earth')) out.earth = { x_mm: e.x_mm, y_mm: e.y_mm, seen_ago: 0 };
@@ -1636,7 +1658,7 @@ export function createModes(ctx) {
       const [x, y] = CP.S.bpos[i], hit = started && t >= b.t - 1e-6, B_ = bmk[i];
       if (shared && i === 1) { hide(B_.mark, B_.lbl); return; }
       setPts(B_.mark, circPts(x, y, MARK_R * 1.4, 28)); B_.mark.dim = hit ? 1 : .45; B_.lbl.dim = hit ? 1 : .75;
-      const [lx, ly] = outward(x, y, ex, ey, 27);
+      const [lx, ly] = outward(x, y, ex, ey, 40);
       const nm = b.name === 'EVADE' ? 'EVADE' : b.name;
       const html = shared && i === 0 ? `BURN 1 <b>${fmtDvh(Math.abs(b.dv))}</b><br>BURN 2 <b>${fmtDvh(Math.abs(pl.burns[1].dv))}</b>` : `${nm} <b>${fmtDvh(Math.abs(b.dv))}</b>`;
       setText(B_.lbl, html); place(B_.lbl, lx, ly, 'cm', faceRot(ly));
@@ -1758,7 +1780,8 @@ export function createModes(ctx) {
       if (o.speed > 5) cur.speed = Math.min(120, +o.speed);
       if (o.sim != null) setMode(o.sim ? 'engage' : 'capture');  // advanced: the real engagement sim (tools/engage.sh, port 8791)
     } else if (mode === 'competitor') {
-      if ('target' in o) cur.target = o.target;                  // 'geo' | 'dro' | <altitude km> | null (= by the Seldon piece)
+      if ('target' in o) cur.target = o.target === 'altitude' ? (+o.alt_km > 0 ? +o.alt_km : 20000) : o.target;   // 'geo' | 'dro' | <altitude km> | 'auto' / null (= by the Seldon piece); the tablet sends 'altitude' + alt_km
+      else if (+o.alt_km > 0 && typeof cur.target === 'number') cur.target = +o.alt_km;
       if (o.speed > 5) cur.speed = Math.min(120, +o.speed);
     }
     if (JSON.stringify(cur) !== prev) { CP.reset = KP.reset = true; }
@@ -1788,8 +1811,8 @@ export function createModes(ctx) {
     updFloor(P, dt, nowMs);
     for (const l of flows) l.material.dashOffset = -3 * nowMs / 1000;   // dashes travel toward increasing point index at 3 mm/s
     railOwner = current;
-    rails.forEach(r => { r.on = grp() !== 'orbits'; });   // the orbits view has no edge rails
-    { const d = grp() === 'orbits' ? 'none' : ''; if (lockEl.style.display !== d) lockEl.style.display = d; }   // nor the company lockup
+    rails.forEach(r => { r.on = current !== 'orbits'; });   // only the old orbits view has no edge rails
+    { const d = current === 'orbits' ? 'none' : ''; if (lockEl.style.display !== d) lockEl.style.display = d; }   // nor the company lockup
     for (const m of MODE_NAMES) {
       if (GROUP[m]) continue;
       const g = groups[m], target = m === grp() ? 1 : 0;
@@ -1819,7 +1842,7 @@ export function createModes(ctx) {
   }
   applyFonts();
   return { update, setMode, onLayout, setOpts, reset: () => { reset(); resetFilm(); }, get mode() { return current; }, boxRect, setTopo: v => { topo = !!v; }, get topo() { return topo; },
-    setBudget: v => { budget = Math.max(0, Math.min(DV_MAX, +v)); }, get budget() { return budget; }, trackY: yForBudget, DV_MAX, engChips, get viewZoom() { return current === 'engage' ? (ENG.zoomNow ?? 1) : 1; }, get scale() { return scaleMode; }, get trueScale() { return scaleMode === 'true'; }, setScale, gdDemo, get orbitsLike() { return grp() === 'orbits'; },
+    setBudget: v => { budget = Math.max(0, Math.min(DV_MAX, +v)); }, get budget() { return budget; }, trackY: yForBudget, DV_MAX, engChips, get viewZoom() { return current === 'engage' ? (ENG.zoomNow ?? 1) : 1; }, get scale() { return scaleMode; }, get trueScale() { return scaleMode === 'true'; }, setScale, gdDemo, get orbitsLike() { return grp() === 'orbits' || current === 'capture' || current === 'competitor'; }, get drawsBodies() { return scaleMode === 'true' && (current === 'geo' || current === 'dro'); },
     titles: Object.fromEntries(MODE_NAMES.map((m, i) => [m, MODE_TITLES[i]])), get handMode() { return current === 'engage' || (current === 'orbits' && OR.zoomOn); }, orbitsDemo: (pc, noMoon) => orbitsDemo(pc, noMoon),
     orbitsFigures: () => ({ earth: OGEO.FIG.E, moon: OGEO.FIG.M, seldon: OGEO.FIG.S }),
     zoomHandPos: () => current === 'orbits' ? along(orbZoomTrack(), slT(OZF, OR.kmmm)) : along(zoomTrack(), slT(ZF, ENG.vals.s.zoom)),

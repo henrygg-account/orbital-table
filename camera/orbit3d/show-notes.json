@@ -29,7 +29,7 @@
         {"k": "GEO period", "v": "one sidereal day (about 23 h 56 min)", "src": "physics"},
         {"k": "Speed in GEO", "v": "about 3.07 km/s", "src": "physics: sqrt(mu / 42,164 km)"}
       ],
-      "mode_opts": {"geo": {"lock_geo": "lock"}}
+      "mode_opts": {"geo": {"band_mm": 40}}
     },
     {
       "id": "dro-moon", "mode": "dro", "title": "Bring out the Moon", "scale": "show",
@@ -50,7 +50,7 @@
         {"k": "DRO far side", "v": "70,000 km from the Moon; period 13.2 days", "src": "data/mission_dro.json"},
         {"k": "Real spiral", "v": "about 690 revolutions; the table draws 5", "src": "mission_dro.json caption"}
       ],
-      "mode_opts": {"dro": {"trail": "full"}}
+      "mode_opts": {"dro": {"dro_km": 36000}}
     },
     {
       "id": "dro-compare", "mode": "dro", "title": "Electric vs chemical to the DRO",
@@ -69,7 +69,7 @@
       "numbers": [
         {"k": "Typical keepout / capture zone", "v": "0.02 to 2 km", "src": "DESIGN.md (Engagement Lab bounds)"}
       ],
-      "mode_opts": {"capture": {"scenario": "defend"}}
+      "mode_opts": {"capture": {"scenario": "capture"}}
     },
     {
       "id": "cap-burn", "mode": "capture", "title": "Burn up, come back down",
@@ -80,14 +80,14 @@
       ]
     },
     {
-      "id": "cap-defend", "mode": "capture", "title": "Defend or pursue", "scale": "show",
-      "do": ["Switch Scenario between Defend and Pursue.", "Move the second Seldon into the keepout zone."],
-      "say": ["Defend: someone approaches us and we keep them out.", "Pursue: we approach a target that is trying to evade.", "Captured means inside the capture range with the other craft's relative speed low. [fill in: the operational definition you use]"],
+      "id": "cap-defend", "mode": "capture", "title": "Capture or defend", "scale": "show",
+      "do": ["Switch Scenario between Capture and Defend.", "Move a Seldon and the film restarts."],
+      "say": ["Defend: someone approaches us and we keep them out.", "Capture: we approach a target and match its orbit.", "Captured means inside the capture range with the other craft's relative speed low. [fill in: the operational definition you use]"],
       "numbers": [
         {"k": "Our craft in the Lab", "v": "thrust 0.05 to 50 N, fuel 0.5 to 200 kg, Isp 100 to 400 s", "src": "DESIGN.md (Engagement Lab bounds)"},
         {"k": "Customer scenarios", "v": "[fill in: scenarios you may name]", "src": ""}
       ],
-      "mode_opts": {"capture": {"scenario": "pursue"}}
+      "mode_opts": {"capture": {"scenario": "defend"}}
     },
     {
       "id": "comp-setup", "mode": "competitor", "title": "Us against a typical tug", "scale": "show",
@@ -97,7 +97,7 @@
         {"k": "Chemical Isp", "v": "about 320 s", "src": "NIGHT-AGENTS.md (competitor config block)"},
         {"k": "Ours", "v": "electric, Isp about 1,500 s", "src": "NIGHT-AGENTS.md; orbits-geo.js uses 1,000 s. [fill in: the real Seldon Isp]"}
       ],
-      "mode_opts": {"competitor": {"target": "GEO"}}
+      "mode_opts": {"competitor": {"target": "geo"}}
     },
     {
       "id": "comp-compare", "mode": "competitor", "title": "Read the fuel gap",
