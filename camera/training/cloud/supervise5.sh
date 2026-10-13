@@ -35,6 +35,7 @@ while true; do
   case "$st" in
     RUNNING|PROVISIONING|STAGING) sleep 120; continue ;;
     TERMINATED|STOPPED|SUSPENDED)
+      gsutil -q stat $B/markers/ALL_DONE 2>/dev/null && continue    # it shut itself down when done: delete it at the top
       log "$NAME is $st (reclaimed?); starting it again"
       if gcloud compute instances start $NAME --zone $ZONE --project $P >/dev/null 2>&1; then log "restarted $NAME"; sleep 120; continue; fi
       log "no capacity in $ZONE; replacing it"
