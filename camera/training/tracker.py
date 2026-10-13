@@ -56,8 +56,11 @@ class Tracker:
     HOLD_S = 3.0            # anywhere else a piece is covered, not gone: held this long (backstop if it was really taken away)
     # identity checks
     COLOUR_MIN = 0.04       # colour fraction that counts as evidence
-    COLOUR_RATIO = 3.0      # relabel only when the other piece's colour is this many times stronger
-    COLOUR_PLACE = 0.10     # a weak detection with this much of its own colour (and little of the others) may place a piece
+    COLOUR_RATIO = 6.0      # relabel only when the other piece's colour is this many times stronger (3 -> 6: COLOUR-STUDY.md, Oct 12)
+    COLOUR_PLACE = 9.0      # a weak detection with this much of its own colour may place a piece: off (> 1); colour alone placed
+                            # phantoms on hands, cables and readout text, and the model already finds 97% (COLOUR-STUDY.md, Oct 12)
+    COLOUR_TRUST_CONF = 0.5 # colour only vetoes or relabels detections weaker than this (it halved 23% of confident live Seldon-1s:
+                            # its yellow is paler on the table than in the labels)
     COLOUR_NONE = 0.01      # below this much of its own colour, a coloured piece's detection counts as half as confident
     NO_COLOUR_PLACE = ('earth',)   # pieces whose colour alone can't place them (blue light from the screen fools it, Oct 9)
     WEAK_S = 2.0            # weak detections (< CONF_NEW) keep a piece only this long after its last confident one
@@ -97,7 +100,7 @@ class Tracker:
     # ------------------------------------------------------------ per-detection checks
     def colour_fix(self, d):
         sc = d.get('colour')
-        if not sc or d['role'] not in sc:
+        if not sc or d['role'] not in sc or d['conf'] >= self.COLOUR_TRUST_CONF:
             return d
         best = max(sc, key=sc.get)
         if best != d['role'] and best in self.cfg['roles'] and sc[best] >= self.COLOUR_MIN and sc[best] > self.COLOUR_RATIO * sc[d['role']]:
@@ -125,7 +128,7 @@ class Tracker:
     def colourless(self, d):
         """A coloured piece's label on a box with none of its colour (e.g. a person labelled Earth)."""
         sc = d.get('colour') or {}
-        return d['role'] in sc and sc[d['role']] < self.COLOUR_NONE
+        return d['role'] in sc and sc[d['role']] < self.COLOUR_NONE and d['conf'] < self.COLOUR_TRUST_CONF
 
     def near_edge(self, x, y):
         return min(x, self.W - x, y, self.H - y) < self.EDGE_MM

@@ -75,8 +75,11 @@ check('no second piece on top of another', pos(T, 'seldon-2') == (720, 400))
 
 T = Tracker(CFG)
 yellow, red = {'earth': 0, 'seldon-1': .3, 'seldon-2': 0}, {'earth': 0, 'seldon-1': 0, 'seldon-2': .3}
+run(T, [[det('seldon-2', 600, 400, conf=.4, colour=yellow), det('seldon-1', 900, 400, conf=.4, colour=red)]] * 6)
+check('colour relabels a weak wrong class', pos(T, 'seldon-1') == (600, 400) and pos(T, 'seldon-2') == (900, 400))
+T = Tracker(CFG)
 run(T, [[det('seldon-2', 600, 400, colour=yellow), det('seldon-1', 900, 400, colour=red)]] * 6)
-check('colour relabels a wrong class', pos(T, 'seldon-1') == (600, 400) and pos(T, 'seldon-2') == (900, 400))
+check('colour never overrides a confident class (COLOUR-STUDY.md: 20 identity swaps vs 2)', pos(T, 'seldon-2') == (600, 400) and pos(T, 'seldon-1') == (900, 400))
 
 T, t = placed()
 for k in range(9):                                     # 1.2 m/s hand move (60 mm per frame), seen every frame
@@ -88,8 +91,8 @@ t = run(T, [[det('earth', 300, 400)]] * 4, t)          # both Seldons covered by
 t = run(T, [[det('seldon-1', 610, 402), det('seldon-2', 715, 398), det('earth', 300, 400)]], t)
 check('uncovered pieces pick up where they were', abs(pos(T, 'seldon-1')[0] - 610) < 5 and abs(pos(T, 'seldon-2')[0] - 715) < 5)
 T = Tracker(CFG)
-run(T, [[det('earth', 600, 400, conf=.9, colour={'earth': 0, 'seldon-1': 0, 'seldon-2': 0})]] * 20)
-check('a confident box with none of its colour never places the piece (a person called Earth)', 'earth' not in T.pieces)
+run(T, [[det('earth', 600, 400, conf=.4, colour={'earth': 0, 'seldon-1': 0, 'seldon-2': 0})]] * 20)
+check('a weak box with none of its colour never places the piece (a person called Earth)', 'earth' not in T.pieces)
 T = Tracker(CFG)
 blue = {'earth': .6, 'seldon-1': 0, 'seldon-2': 0}
 run(T, [[det('earth', 800, 70, conf=.13, colour=blue)]] * 40)
