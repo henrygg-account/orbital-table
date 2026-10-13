@@ -243,8 +243,8 @@ TRACKER_KNOBS = ('SMOOTH', 'BAND_MOVING_MM', 'BAND_STILL_MM', 'STILL_S', 'REST_M
                  'GATE_MM', 'VMAX_MM_S', 'ROLE_PENALTY_MM', 'CONF_NEW', 'CONFIRM_FRAMES', 'RELOCATE_S', 'EDGE_MM', 'LEAVE_S', 'HOLD_S',
                  'UNLOCK_FRAMES', 'UNLOCK_S', 'HAND_NEAR_MM', 'HAND_PUSH_MM', 'HAND_PUSH_S', 'HAND_PUSH_FRAMES', 'HAND_HOLD_MM', 'HAND_RELOC_S', 'CARRY_HOLD_S', 'PARTIAL_FRAC', 'OCCLUDE_FRAC',
                  'HAND_CAND_MM')
-PAGE_TAU_S = 0.35        # demo.html eases each still piece toward the feed with this time constant...
-PAGE_TAU_MOVE_S = 0.6    # ...and a moving one with this (tune.html, Oct 9)
+PAGE_TAU_S = 0.47        # (tuned on the table, Oct 13) demo.html eases each still piece toward the feed with this time constant...
+PAGE_TAU_MOVE_S = 0.58   # (Oct 13) ...and a moving one with this (tune.html, Oct 9)
 PAGE_LEAD_S = 0.6        # a moving piece is drawn this far ahead along its velocity (tune.html, Oct 9; cancels the moving easing's lag)
 PAGE_KNOBS = {'page_tau_s': PAGE_TAU_S, 'page_tau_move_s': PAGE_TAU_MOVE_S, 'page_lead_s': PAGE_LEAD_S}
 

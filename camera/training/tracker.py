@@ -54,8 +54,8 @@ class Tracker:
     CONFIRM_MM = 40.0       # ...within this distance of itself
     RELOCATE_S = 0.25       # a piece moves to a confirmed far detection only after being unseen this long
     # leaving the table
-    EDGE_MM = 40.0          # last seen this close to the screen edge: it may have been taken off
-    LEAVE_S = 2.9           # ...and is dropped after this long unseen (tune.html, Oct 9)
+    EDGE_MM = 80.0          # (tuned on the table, Oct 13) last seen this close to the screen edge: it may have been taken off
+    LEAVE_S = 1.3           # ...and is dropped after this long unseen (tune.html, Oct 13)
     HOLD_S = 3.0            # anywhere else a piece is covered, not gone: held this long (backstop if it was really taken away)
     # identity checks
     COLOUR_MIN = 0.04       # colour fraction that counts as evidence
@@ -73,11 +73,11 @@ class Tracker:
     # publishing (stillness lock, as before)
     SMOOTH = 0.6            # Oct 12: was 1.0 (raw)
     BAND_MOVING_MM = 1.0    # was 0
-    BAND_STILL_MM = 8.0     # was 5
-    STILL_S = 0.8           # was 1.0: locks sooner
-    REST_MM = 15.0
-    UNLOCK_FRAMES = 2       # a locked piece follows a detection beyond REST_MM only after this many frames...
-    UNLOCK_S = 0.05         # ...and this long, all in one place (CONFIRM_MM)
+    BAND_STILL_MM = 3.5     # (tuned on the table, Oct 13; was 8)
+    STILL_S = 1.0           # (tuned on the table, Oct 13)
+    REST_MM = 7.0           # (tuned on the table, Oct 13; was 15)
+    UNLOCK_FRAMES = 1       # (Oct 13) a locked piece follows a detection beyond REST_MM only after this many frames...
+    UNLOCK_S = 0.0          # (Oct 13) ...and this long, all in one place (CONFIRM_MM)
     # hands (person outlines, screen mm)
     HAND_NEAR_MM = 90.0     # a locked piece with a hand outline this close ignores drifting detections...
     HAND_PUSH_MM = 25.0     # ...unless the detection is this far from where the piece locked,
