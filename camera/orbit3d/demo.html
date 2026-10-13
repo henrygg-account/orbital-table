@@ -373,7 +373,8 @@ try { new EventSource('/events').onmessage = e => { try { feed = JSON.parse(e.da
 const online = () => performance.now() - feedAt < 1500;
 // the table never drops back to demo once it has been live: a camera or live.py hiccup holds the last scene as it was
 // (no demo stand-ins, no stand-in models over the printed pieces, no DEMO note); the pieces resume when the feed does
-const liveView = () => everLive || online();
+const KEEP_DEMO = Q.has('keepdemo');   // test hook (rehearsal against a live.py that sees no pieces): the show state comes from the feed, the pieces stay demo stand-ins
+const liveView = () => !KEEP_DEMO && (everLive || online());
 for (const [k, [x, y]] of Object.entries(DEMO)) pieces[k] = { x_mm: x, y_mm: y, seen_ago: 0 };
 { // test hooks: ?mode=engage|dvmap  ?s1=700,300  ?s2=..  ?chip=2 (box index, after createModes) ?nomoon ?noearth ?end=left
   for (const [q, k] of [['s1', 'seldon-1'], ['s2', 'seldon-2'], ['earth', 'earth'], ['moon', 'moon']]) if (Q.get(q)) { const [x, y] = Q.get(q).split(',').map(Number); Object.assign(pieces[k], { x_mm: x, y_mm: y }); }
@@ -664,7 +665,7 @@ function tick(now) {
   if (live && feed) {
     if (feed.screen_mm && (feed.screen_mm[0] !== SW || feed.screen_mm[1] !== SH)) { [SW, SH] = feed.screen_mm; layout(); }
     applyShow(feed.show);
-    if (!showFrozen()) for (const k of Object.keys(ROLES)) { const p = feed.pieces?.[k]; if (p) pieces[k] = p; else delete pieces[k]; }   // frozen: the pieces stay where they were
+    if (!showFrozen()) for (const k of Object.keys(ROLES)) { const p = feed.pieces?.[k]; if (p) pieces[k] = p; else if (!KEEP_DEMO) delete pieces[k]; }   // frozen: the pieces stay where they were
     if (feed.chip) pieces.chip = feed.chip;
     {   // camera: fingertips from round 4's person outlines; the hand is the one nearest the zoom track (when it is in play)
       const g = modes.handTrack(), dx = g.t1.x - g.t0.x, dy = g.t1.y - g.t0.y, L2 = dx * dx + dy * dy;

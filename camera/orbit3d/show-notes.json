@@ -16,7 +16,7 @@
       "say": ["Chemical: two hard burns, an ellipse between the rings (Hohmann). Fast.", "Electric: a gentle push all the way, a spiral outward. Slow, but it uses far less propellant.", "Same start, same end. The trade is time against fuel."],
       "numbers": [
         {"k": "Chemical, two burns", "v": "3.85 km/s, about 5.3 hours", "src": "vehicle.js TUG (Isp 320 s); time = Hohmann half-period at these radii"},
-        {"k": "Electric spiral", "v": "4.59 km/s, 119 kg propellant", "src": "vehicle.js SELDON (Isp 1,000 s, 200 kg dry; placeholder)"},
+        {"k": "Electric spiral", "v": "4.59 km/s, 120 kg propellant", "src": "vehicle.js SELDON (Isp 1,000 s, 200 kg dry; placeholder)"},
         {"k": "Spiral time", "v": "about 271 days at 50 mN", "src": "vehicle.js SELDON thrust 50 mN (placeholder); propellant / mass flow. COMPETITOR shows the same"},
         {"k": "Real thruster", "v": "[fill in: Seldon thrust and Isp]", "src": "vehicle.js holds the placeholders"}
       ]
@@ -106,7 +106,7 @@
       "do": ["Let them read the two fuel bars. Change the target altitude and watch the gap move."],
       "say": ["Impulsive burns are quick but each kg of chemical propellant gives little push.", "Electric gives several times more push per kg, so the fuel number is much smaller.", "The price is time. Say so before they ask."],
       "numbers": [
-        {"k": "Example, LEO to GEO", "v": "chemical about 483 kg, electric about 119 kg, for the same 200 kg dry craft", "src": "vehicle.js: Isp 320 vs 1,000 s, DELTA-V 3.85 vs 4.59 km/s. Placeholder vehicle."},
+        {"k": "Example, LEO to GEO", "v": "chemical about 483 kg, electric about 120 kg, for the same 200 kg dry craft", "src": "vehicle.js: Isp 320 vs 1,000 s, DELTA-V 3.85 vs 4.59 km/s. Placeholder vehicle."},
         {"k": "Trip time", "v": "about 5.3 hours chemical, about 271 days electric", "src": "vehicle.js (Hohmann half-period; propellant / mass flow at 50 mN)"},
         {"k": "Our vehicle", "v": "[fill in: Seldon wet and dry mass]", "src": "vehicle.js: 200 kg dry is a placeholder"}
       ]
@@ -167,7 +167,7 @@
     },
     {
       "q": "How much fuel does a transfer take?", "keys": "fuel propellant kg mass rocket equation",
-      "a": "Set by the rocket equation: more Isp, less fuel for the same DELTA-V. Example: LEO to GEO needs about 483 kg chemical or about 119 kg electric, for a 200 kg dry craft.",
+      "a": "Set by the rocket equation: more Isp, less fuel for the same DELTA-V. Example: LEO to GEO needs about 483 kg chemical or about 120 kg electric, for a 200 kg dry craft.",
       "numbers": [{"k": "Vehicle", "v": "200 kg dry (placeholder)", "src": "vehicle.js SELDON"}, {"k": "Real vehicle", "v": "[fill in]", "src": ""}],
       "act": {"label": "Show COMPETITOR", "beat": "comp-compare"}
     },
