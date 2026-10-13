@@ -241,7 +241,7 @@ class Tracker:
 # the Tracker constants above, the detector's confidence threshold, and the pages' easing time (sent in /events).
 TRACKER_KNOBS = ('SMOOTH', 'BAND_MOVING_MM', 'BAND_STILL_MM', 'STILL_S', 'REST_MM',      # tracker.py
                  'GATE_MM', 'VMAX_MM_S', 'ROLE_PENALTY_MM', 'CONF_NEW', 'CONFIRM_FRAMES', 'RELOCATE_S', 'EDGE_MM', 'LEAVE_S', 'HOLD_S',
-                 'UNLOCK_FRAMES', 'UNLOCK_S', 'HAND_NEAR_MM', 'HAND_PUSH_MM', 'HAND_PUSH_S', 'HAND_PUSH_FRAMES', 'HAND_HOLD_MM', 'HAND_RELOC_S', 'CARRY_HOLD_S',
+                 'UNLOCK_FRAMES', 'UNLOCK_S', 'HAND_NEAR_MM', 'HAND_PUSH_MM', 'HAND_PUSH_S', 'HAND_PUSH_FRAMES', 'HAND_HOLD_MM', 'HAND_RELOC_S', 'CARRY_HOLD_S', 'PARTIAL_FRAC', 'OCCLUDE_FRAC',
                  'HAND_CAND_MM')
 PAGE_TAU_S = 0.35        # demo.html eases each still piece toward the feed with this time constant...
 PAGE_TAU_MOVE_S = 0.6    # ...and a moving one with this (tune.html, Oct 9)

@@ -152,6 +152,16 @@ check('hand waving over a piece that has not locked yet does not move it', pos(T
 t = run_h(T, [([det('seldon-1', 880 + 45, 400)] + others, [box(760, 400, 100, 100)]) for k in range(FPS)], t)
 check('...nor a detection drifting 45 mm off it under the waving hand', pos(T, 'seldon-1') == put)
 
+sz = lambda d, s: {**d, 'size_mm': s}                                     # a Seldon's box is ~150 mm on the diagonal
+T, t = placed()
+t = run(T, [[sz(det('seldon-1', 600, 400), 150), det('seldon-2', 720, 400), det('earth', 300, 400)]] * (2 * FPS), t)
+t = run_h(T, [([sz(det('seldon-1', 600 + 40 * (k % 2), 400), 80)] + others, [box(680, 400, 100, 60)]) for k in range(2 * FPS)], t)
+check('a Seldon mostly covered (box half its size, centre 40 mm along) does not move', pos(T, 'seldon-1') == (600, 400))
+t = run(T, [[sz(det('seldon-1', 600 + 40, 400), 80), det('seldon-2', 720, 400), det('earth', 300, 400)]] * FPS, t)
+check('...not even with no hand outline in sight (only the partial view)', pos(T, 'seldon-1') == (600, 400))
+t = run(T, [[sz(det('seldon-1', 600 + 5 * k, 400), 150), det('seldon-2', 820, 400), det('earth', 300, 400)] for k in range(30)], t)
+check('...but a full-size view that moves is followed', pos(T, 'seldon-1')[0] > 700)
+
 T, t = settled()                                                         # picked up, hand holds it, put down 300 mm away
 t = run_h(T, [(others, [box(600, 400)])] * 6, t)                          # covered by the hand
 t = run_h(T, [([det('seldon-1', 900, 400)] + others, [box(900, 400)])] * (FPS // 2), t)   # reappears under the hand

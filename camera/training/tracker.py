@@ -22,6 +22,8 @@ The detector is treated as a noisy sensor; the tracker decides what is true, und
      relocations within HAND_CAND_MM of a hand must be seen HAND_RELOC_S, not CONFIRM_FRAMES (a hand called Seldon
      flickers; a carried piece persists), and are accepted at once when the hand has left, so a piece that was picked
      up and put down settles where it is seen once the hand is gone.
+  10. A partial view never moves a piece (Oct 13): a Seldon mostly covered by a hand shows a shorter box whose centre
+      slides along it. A detection under PARTIAL_FRAC of the piece's full size, within OCCLUDE_FRAC of it, keeps it seen only.
   9. A locked piece unlocks only for a deliberate move: the detection must stay beyond BAND_STILL_MM of where the piece is
      published for UNLOCK_FRAMES frames and UNLOCK_S, so a one-frame outlier can't start a wobble. Matching keeps using
      the raw detection (ex, ey); only what is published (sx, sy: smoothed, SMOOTH) is held back.
@@ -85,6 +87,9 @@ class Tracker:
     HAND_CAND_MM = 60.0     # new / relocated pieces this close to a hand outline need to be seen HAND_RELOC_S, not just a few frames
     HAND_RELOC_S = 0.7
     HAND_MEMORY_S = 0.5     # an outline stays valid this long after the model last saw it (it flickers)
+    PARTIAL_FRAC = 0.8      # a detection smaller than this share of the piece's full size is a partial view (a long Seldon half
+    OCCLUDE_FRAC = 0.5      # covered: its box centre slides along it); one within this share of the full size of where the piece
+                            # is keeps it seen but never moves it (Oct 13). Full size: learned from confident, hand-free views
     CARRY_HOLD_S = 0.2      # a carry (piece moving with a hand on it) ends this long after it last moved (~4 frames); outside a
                             # carry the hand gate applies whether or not the piece has locked yet (waving right after a placement, Oct 13)
 
@@ -242,6 +247,15 @@ class Tracker:
         p = self.pieces[i]
         dt = max(1 / 60, now - p['t'])
         zx, zy = d['x_mm'], d['y_mm']
+        s, full = d.get('size_mm'), p.get('full')
+        if s:
+            if d['conf'] >= 0.5 and not self.hand_near(zx, zy, self.HAND_NEAR_MM):   # full size: up quickly, down very slowly
+                p['full'] = s if full is None else full + (0.2 if s > full else 0.02) * (s - full)
+            if full and s < self.PARTIAL_FRAC * full and np.hypot(zx - p['x_mm'], zy - p['y_mm']) < self.OCCLUDE_FRAC * full:
+                p.update(u=d['u'], v=d['v'], conf=d['conf'], t=now)   # partly covered: seen where it is, not moved
+                if d['conf'] >= self.CONF_NEW:
+                    p['strong_t'] = now
+                return
         p['vx'] = 0.6 * p['vx'] + 0.4 * (zx - p['ex']) / dt
         p['vy'] = 0.6 * p['vy'] + 0.4 * (zy - p['ey']) / dt
         rest = p['rest']
