@@ -245,19 +245,20 @@ function skyTiles(z) {
   SKY.level = L;
   if (Q.has('skydbg') && (!SKY._dbg || now - SKY._dbg > 1500)) { SKY._dbg = now; console.log('SKYDBG', 'L', L, 'lf', lf.toFixed(2), 'want', want.size, 'shown', shown.length, 'cached', tileCache.size, 'blobs', tileBlobs.size, 'z', z.toFixed(3)); }
 }
+// Vertigo: the sky used to pan with Earth, roll with the Earth-Moon axis, breathe its field of view with the Earth-Moon
+// distance, follow the table zoom, and drift on top, so the whole background moved whenever a piece did. Now ?sky= or
+// window.SHOW_SKY (read every frame; the presenter sets it) picks: 'still' (default: a fixed view, nothing moves), 'slow'
+// (the same view with a constant very slow yaw, 0.0007 rad/s = 1/5 of the old ambient drift: no pan, tilt, zoom or
+// direction change), 'off' (no sky). Switching never jumps: the drift angle only integrates forward, and off fades out.
+const SKY_MODES = ['still', 'slow', 'off'];
+SKY.drift = 0; SKY.fade = 1;
 function updateSky(E, M, dt, now) {
-  const ex = E ? E.x : SW * .23, ey = E ? E.y : SH / 2;
-  const dx = (M ? M.x : ex + 750) - ex, dy = (M ? M.y : ey) - ey, ang = Math.atan2(-dy, dx);              // Earth→Moon direction on screen
-  const d = Math.max(300, Math.hypot(dx, dy));
-  const tYaw = (ex - SW / 2) / SW * 0.9 + now / 1000 * 0.0035;                                             // pan with Earth + ambient drift
-  const tPitch = -(ey - SH / 2) / SH * 0.55;
-  let tFov = clampN(SKY_FOV0 * 750 / d, SKY_FOV[0], SKY_FOV[1]);
-  const vz = (typeof modes !== 'undefined' && modes) ? modes.viewZoom : 1;                                 // table zoom (engagement lens): the sky scales with it
-  const tRoll = ang + SKY_TILT;                                        // band follows the axis; closer pieces = tighter sky
-  const a = 1 - Math.exp(-dt / .3);
-  SKY.yaw += (tYaw - SKY.yaw) * a; SKY.pitch += (tPitch - SKY.pitch) * a; SKY.fov += (tFov - SKY.fov) * a;
-  SKY.z = SKY.z ?? 1; SKY.z += (1 / Math.max(1e-3, vz) - SKY.z) * (1 - Math.exp(-dt / .08));                // table zoom-out factor (tracks the lens closely)
-  let dr = tRoll - SKY.roll; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); SKY.roll += dr * a;
+  const qs = Q.get('sky'), want = window.SHOW_SKY ?? (SKY_MODES.includes(qs) ? qs : 'still');
+  const mode = SKY_MODES.includes(want) ? want : 'still';
+  SKY.fade += ((mode === 'off' ? 0 : 1) - SKY.fade) * (1 - Math.exp(-dt / .4));
+  skyDome.visible = SKY.fade > .004;  if (!skyDome.visible) return;
+  SKY.drift += (mode === 'slow' ? 0.0007 : 0) * dt;
+  SKY.yaw = SKY.drift; SKY.pitch = 0; SKY.roll = SKY_TILT; SKY.fov = SKY_FOV0; SKY.z = 1;
   if (SKY_TRUE) skyCam.quaternion.setFromRotationMatrix(SKY_BASIS);   // fixed: the true sky behind the table
   else skyCam.rotation.set(SKY.pitch, SKY.yaw, SKY.roll, 'YXZ');
   if (Math.abs(skyCam.fov - SKY.fov) > .01) { skyCam.fov = SKY.fov; skyCam.updateProjectionMatrix(); }
@@ -265,7 +266,7 @@ function updateSky(E, M, dt, now) {
   const halfDiag = Math.atan(Math.tan(skyCam.fov * Math.PI / 360) * Math.hypot(1, skyCam.aspect));       // the whole sky fits at most once
   const z = Math.min(SKY.z, .8 * Math.PI / halfDiag);                                                   // stop short of the whole sky (corners would pinch)
   const su = skyDome.material.uniforms; su.uInvProj.value.copy(skyCam.projectionMatrixInverse); su.uCamRot.value.setFromMatrix4(skyCam.matrixWorld); su.uZ.value = z;
-  skyExposure(su, z, dt);
+  skyExposure(su, z, dt); su.uExpo.value *= SKY.fade;
   skyTiles(z);
 }
 const _sv = new THREE.Vector4(), _sd = new THREE.Vector3();
@@ -632,10 +633,21 @@ function tick(now) {
   // also drawn a little ahead along their velocity to make up for the camera + model delay
   const tauStill = live && feed.page_tau_s != null ? feed.page_tau_s : .09, tauMove = live && feed.page_tau_move_s != null ? feed.page_tau_move_s : tauStill;
   const lead = live && feed.page_lead_s != null ? feed.page_lead_s : 0;
+  // Smoothness, in order of what matters. (1) The TV runs 29 Hz and the iGPU is shared with the detector, so more frames
+  // would buy nothing there; what made motion look like 30 fps was a 18 Hz feed eased in steps. So per rendered frame:
+  // (2) a dead zone: raw positions within DEADZONE mm of the held target are ignored (feed jitter never moves a piece; a
+  // real move leaves the zone and the target snaps to it, then the ease below follows promptly); (3) while moving, the
+  // target is dead-reckoned along the feed velocity by the time since the message (+ the camera lead), so between 18 Hz
+  // messages it glides instead of stair-stepping; (4) frame-rate-independent exponential ease (1 - exp(-dt/tau)).
+  const DEADZONE = 2.5, age = live ? Math.min(.12, Math.max(0, (now - feedAt) / 1000)) : 0;
   for (const [k, p] of Object.entries(pieces)) {
-    const vx = p.vx || 0, vy = p.vy || 0, f = Math.min(1, Math.hypot(vx, vy) / 150);   // fully "moving" from 150 mm/s
-    const a = 1 - Math.exp(-dt / Math.max(.001, tauStill + (tauMove - tauStill) * f)), tx = p.x_mm + vx * lead, ty = p.y_mm + vy * lead;
-    if (!smooth[k]) smooth[k] = { x: p.x_mm, y: p.y_mm }; else { smooth[k].x += (tx - smooth[k].x) * a; smooth[k].y += (ty - smooth[k].y) * a; }
+    const vx = p.vx || 0, vy = p.vy || 0, sp = Math.hypot(vx, vy), f = Math.min(1, sp / 150);   // fully "moving" from 150 mm/s
+    const a = 1 - Math.exp(-dt / Math.max(.001, tauStill + (tauMove - tauStill) * f));
+    const S_ = smooth[k] || (smooth[k] = { x: p.x_mm, y: p.y_mm, hx: p.x_mm, hy: p.y_mm });
+    if (S_.hx === undefined) { S_.hx = p.x_mm; S_.hy = p.y_mm; }
+    if (Math.hypot(p.x_mm - S_.hx, p.y_mm - S_.hy) > DEADZONE || k === 'hand' || k === 'chip' || !live) { S_.hx = p.x_mm; S_.hy = p.y_mm; }   // demo drag, the hand and the chip are not dead-zoned
+    const ahead = sp > 40 ? lead + age : 0;                                            // only genuinely moving pieces are extrapolated
+    S_.x += (S_.hx + vx * ahead - S_.x) * a; S_.y += (S_.hy + vy * ahead - S_.y) * a;
   }
   for (const k of Object.keys(smooth)) if (!pieces[k]) delete smooth[k];
   const held = k => pieces[k] && pieces[k].seen_ago > .6;
