@@ -22,7 +22,7 @@ The detector is treated as a noisy sensor; the tracker decides what is true, und
      relocations within HAND_CAND_MM of a hand must be seen HAND_RELOC_S, not CONFIRM_FRAMES (a hand called Seldon
      flickers; a carried piece persists), and are accepted at once when the hand has left, so a piece that was picked
      up and put down settles where it is seen once the hand is gone.
-  10. A partial view never moves a piece (Oct 13): a Seldon mostly covered by a hand shows a shorter box whose centre
+  10. A partial view never moves a piece at rest (Oct 13; once a piece is moving, partial views are followed): a Seldon mostly covered by a hand shows a shorter box whose centre
       slides along it. A detection under PARTIAL_FRAC of the piece's full size, within OCCLUDE_FRAC of it, keeps it seen only.
   9. A locked piece unlocks only for a deliberate move: the detection must stay beyond BAND_STILL_MM of where the piece is
      published for UNLOCK_FRAMES frames and UNLOCK_S, so a one-frame outlier can't start a wobble. Matching keeps using
@@ -251,7 +251,8 @@ class Tracker:
         if s:
             if d['conf'] >= 0.5 and not self.hand_near(zx, zy, self.HAND_NEAR_MM):   # full size: up quickly, down very slowly
                 p['full'] = s if full is None else full + (0.2 if s > full else 0.02) * (s - full)
-            if full and s < self.PARTIAL_FRAC * full and np.hypot(zx - p['x_mm'], zy - p['y_mm']) < self.OCCLUDE_FRAC * full:
+            in_motion = now - p.get('carry_t', -1e9) < self.CARRY_HOLD_S or now - p['rest'][2] < 0.3   # (a partial view can't start a
+            if not in_motion and full and s < self.PARTIAL_FRAC * full and np.hypot(zx - p['x_mm'], zy - p['y_mm']) < self.OCCLUDE_FRAC * full:   # move; once moving, it is followed)
                 p.update(u=d['u'], v=d['v'], conf=d['conf'], t=now)   # partly covered: seen where it is, not moved
                 if d['conf'] >= self.CONF_NEW:
                     p['strong_t'] = now

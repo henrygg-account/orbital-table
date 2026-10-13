@@ -161,6 +161,8 @@ t = run(T, [[sz(det('seldon-1', 600 + 40, 400), 80), det('seldon-2', 720, 400), 
 check('...not even with no hand outline in sight (only the partial view)', pos(T, 'seldon-1') == (600, 400))
 t = run(T, [[sz(det('seldon-1', 600 + 5 * k, 400), 150), det('seldon-2', 820, 400), det('earth', 300, 400)] for k in range(30)], t)
 check('...but a full-size view that moves is followed', pos(T, 'seldon-1')[0] > 700)
+t = run(T, [[sz(det('seldon-1', 750 + 5 * k, 400), 80), det('seldon-2', 1100, 400), det('earth', 300, 400)] for k in range(20)], t)
+check('...and once it is moving, partial views of it are followed too (a hand covering it while carrying)', pos(T, 'seldon-1')[0] > 820)
 
 T, t = settled()                                                         # picked up, hand holds it, put down 300 mm away
 t = run_h(T, [(others, [box(600, 400)])] * 6, t)                          # covered by the hand
