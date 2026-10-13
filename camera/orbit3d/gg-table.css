@@ -53,7 +53,7 @@ html, body { background: var(--gg-black); color: var(--gg-fog-100); font-family:
 .rail .r-mets { display: flex; gap: calc(var(--mm) * 18); align-items: flex-end; }
 .rail .r-msg { font-family: var(--font-display); font-size: max(10px, calc(var(--mm) * 12)); color: var(--gg-fog-100); }
 
-#lockup { position: fixed; pointer-events: none; transform-origin: 50% 50%; opacity: .55; }
+#lockup { position: fixed; pointer-events: none; transform-origin: 50% 50%; opacity: .55; width: 8vw; height: auto; visibility: hidden; }   /* hidden until modes.js sizes and places it (else the full-size PNG flashes at load) */
 
 /* ---- orbits mode: transfer blocks (ET bottom-left, GT bottom-right) in the edge rails ---- */
 .rail .xf { display: flex; flex-direction: column; gap: calc(var(--mm) * 5); }

@@ -254,7 +254,7 @@ export function createModes(ctx) {
     // lockup: centred on the box column, below the stack, reads from the presenter's end
     const lw = 120, lh = lw * (lockEl.naturalWidth ? lockEl.naturalHeight / lockEl.naturalWidth : .25), lcx = t.cx, lcy = sh - MARG - 94;
     put(lockEl, lcx, lcy); lockEl.style.width = lw * s + 'px'; lockEl.style.height = 'auto';
-    lockEl.style.transform = `translate(-50%,-50%) rotate(${boxRot}deg)`;
+    lockEl.style.transform = `translate(-50%,-50%) rotate(${boxRot}deg)`; lockEl.style.visibility = 'visible';
     CH.lock = [lcx - lh / 2, lcy - lw / 2, lcx + lh / 2, lcy + lw / 2];
     applyFonts();
   }
@@ -1470,7 +1470,7 @@ export function createModes(ctx) {
     pieceObs = ids.map(id => ({ x: P[id].x_mm, y: P[id].y_mm, r: PIECE_R[id] + TAG_GAP }));
     if (TS) {   // Earth and the Moon drawn at true relative size (the 3D stand-ins are hidden by the page)
       [[E, R_E, 0, 'EARTH'], [Mo, R_M, 1, 'MOON']].forEach(([c, R, i, name]) => {
-        const r = R * maps.k;
+        const r = R * maps.k; (OR.trueB ||= [null, null])[i] = { x: c.x_mm, y: c.y_mm, r };
         OR.disc[i].obj.scale.set(r, r, 1); OR.disc[i].obj.position.set(c.x_mm, -c.y_mm, -.3); OR.disc[i].on = true;
         setPts(OR.discL[i], circPts(c.x_mm, c.y_mm, r, 96)); pieceObs.push({ x: c.x_mm, y: c.y_mm, r: r + TAG_GAP });
         tagAt(OR.discT[i], name, c.x_mm, c.y_mm + r + 10, 8);
@@ -1647,7 +1647,7 @@ export function createModes(ctx) {
       const [x, y] = CP.S.bpos[i], hit = started && t >= b.t - 1e-6, B_ = bmk[i];
       if (shared && i === 1) { hide(B_.mark, B_.lbl); return; }
       setPts(B_.mark, circPts(x, y, MARK_R * 1.4, 28)); B_.mark.dim = hit ? 1 : .45; B_.lbl.dim = hit ? 1 : .75;
-      const [lx, ly] = outward(x, y, ex, ey, 40);
+      const [lx, ly] = outward(x, y, ex, ey, 52);                 // clear of the CHASER / TARGET tags that sit on the dots at the start
       const nm = b.name === 'EVADE' ? 'EVADE' : b.name;
       const html = shared && i === 0 ? `BURN 1 <b>${fmtDvh(Math.abs(b.dv))}</b><br>BURN 2 <b>${fmtDvh(Math.abs(pl.burns[1].dv))}</b>` : `${nm} <b>${fmtDvh(Math.abs(b.dv))}</b>`;
       setText(B_.lbl, html); place(B_.lbl, lx, ly, 'cm', faceRot(ly));
@@ -1656,8 +1656,8 @@ export function createModes(ctx) {
     // the rendezvous ring on the chaser's second burn
     { const q = CP.S.bpos[1], hit = done; setPts(CD.rdv, circPts(q[0], q[1], 9, 40)); CD.rdv.dim = hit ? 1 : .0; CD.rdv.on = hit && !defend; }
     // tags ride the dots: CHASER on the outside, TARGET on the inside, facing the nearest long edge
-    { const [x, y] = outward(qc[0], qc[1], ex, ey, 11); setText(CD.tagC, 'CHASER'); place(CD.tagC, x, y, 'cm', faceRot(y)); }
-    { const [x, y] = outward(qt[0], qt[1], ex, ey, -11); setText(CD.tagT, defend ? 'TARGET' : 'TARGET'); place(CD.tagT, x, y, 'cm', faceRot(y)); }
+    { const [x, y] = outward(qc[0], qc[1], ex, ey, 19); setText(CD.tagC, 'CHASER'); place(CD.tagC, x, y, 'cm', faceRot(y)); }
+    { const [x, y] = outward(qt[0], qt[1], ex, ey, -19); setText(CD.tagT, defend ? 'TARGET' : 'TARGET'); place(CD.tagT, x, y, 'cm', faceRot(y)); }
     footNote(CD.foot, 'Not to scale.');
     // rails
     let lab = 'READY'; if (done) lab = defend ? 'KEEP-OUT HELD' : 'CAPTURED'; else if (started) for (const ev of pl.events) if (ev.t <= t + 1e-6) lab = ev.label;
@@ -1833,6 +1833,7 @@ export function createModes(ctx) {
   return { update, setMode, onLayout, setOpts, reset: () => { reset(); resetFilm(); }, get mode() { return current; }, boxRect, setTopo: v => { topo = !!v; }, get topo() { return topo; },
     setBudget: v => { budget = Math.max(0, Math.min(DV_MAX, +v)); }, get budget() { return budget; }, trackY: yForBudget, DV_MAX, engChips, get viewZoom() { return current === 'engage' ? (ENG.zoomNow ?? 1) : 1; }, get scale() { return scaleMode; }, get trueScale() { return scaleMode === 'true'; }, setScale, gdDemo, get orbitsLike() { return grp() === 'orbits' || current === 'capture' || current === 'competitor'; }, get drawsBodies() { return scaleMode === 'true' && (current === 'geo' || current === 'dro'); },
     titles: Object.fromEntries(MODE_NAMES.map((m, i) => [m, MODE_TITLES[i]])), get handMode() { return current === 'engage' || (current === 'orbits' && OR.zoomOn); }, orbitsDemo: (pc, noMoon) => orbitsDemo(pc, noMoon),
+    get trueBodies() { return OR.trueB || []; },   // true scale: the drawn Earth and Moon {x, y, r} in mm (the page keeps its Seldon stand-ins clear of them)
     orbitsFigures: () => ({ earth: OGEO.FIG.E, moon: OGEO.FIG.M, seldon: OGEO.FIG.S }),
     zoomHandPos: () => current === 'orbits' ? along(orbZoomTrack(), slT(OZF, OR.kmmm)) : along(zoomTrack(), slT(ZF, ENG.vals.s.zoom)),
     handTrack: () => current === 'orbits' ? orbZoomTrack() : zoomTrack(),   // the zoom track the camera's fingertips are matched to

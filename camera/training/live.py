@@ -779,6 +779,26 @@ class LatestFrame:
             return self.seq, self.frame
 
 
+class LoopVideo:
+    """--video: a recording played in a loop at its own frame rate, with the little of cv2.VideoCapture that main() uses."""
+    def __init__(self, path):
+        self.cap = cv2.VideoCapture(str(path)); self.dt = 1 / (self.cap.get(cv2.CAP_PROP_FPS) or 30); self.next_t = time.time()
+
+    def isOpened(self):
+        return self.cap.isOpened()
+
+    def get(self, prop):
+        return self.cap.get(prop)
+
+    def read(self):
+        time.sleep(max(0.0, self.next_t - time.time())); self.next_t = max(self.next_t, time.time() - self.dt) + self.dt
+        ok, f = self.cap.read()
+        if not ok:                         # end of the file: back to the start
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ok, f = self.cap.read()
+        return ok, f
+
+
 class FixedRateExposure:
     """Windows (DirectShow): in room light the Arducam's auto exposure lengthens each frame to ~1/14 s, so it delivers
     14 fps, not 30. Instead: take the brightness auto exposure settles on, lock the exposure at the longest that still
@@ -862,6 +882,7 @@ def main():
                     help="Windows: 'fixed' = 30 fps with the gain holding auto exposure's brightness (FixedRateExposure); "
                          "'auto' = the camera's own (drops to ~14 fps in room light)")
     ap.add_argument('--idle-hz', type=float, default=5, help='model runs per second while nothing moves (0: always full speed)')
+    ap.add_argument('--video', metavar='FILE', help='rehearsal: read this recording (looped) instead of a camera')
     a = ap.parse_args()
     if sys.platform == 'win32':            # it would "fix" onnxruntime-directml by installing the CPU onnxruntime over it
         os.environ.setdefault('YOLO_AUTOINSTALL', 'false')
@@ -879,22 +900,28 @@ def main():
     show_load()
     serve(a.port, lan=not a.local_only)
 
-    idx, name = (a.index, f'camera {a.index}') if a.index is not None else find_camera(a.camera)
-    dev = f'camera {idx} ({name})'
     cw, ch = map(int, a.size.lower().split('x'))
     win = sys.platform == 'win32'
-    if not win:                            # the Arducam can hang at 2048x1536 after a process that had it exits: opening it
-        wake = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)   # once at its default size first clears that (Oct 9)
-        for _ in range(5):
-            wake.read()
-        wake.release()
-    cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW if win else cv2.CAP_AVFOUNDATION)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, cw); cap.set(cv2.CAP_PROP_FRAME_HEIGHT, ch)
-    if win:                                # UVC: MJPG, after the size and with no CAP_PROP_FPS: any other order, or
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))   # setting the fps, gives raw YUY2 at 5 fps at 1280x960
+    if a.video:                            # rehearsal: a recorded video stands in for the camera (looped, at its own frame rate)
+        idx, dev = 0, f'video {Path(a.video).name}'
+    else:
+        idx, name = (a.index, f'camera {a.index}') if a.index is not None else find_camera(a.camera)
+        dev = f'camera {idx} ({name})'
+    if a.video:
+        cap = LoopVideo(a.video)
+    else:
+        if not win:                        # the Arducam can hang at 2048x1536 after a process that had it exits: opening it
+            wake = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)   # once at its default size first clears that (Oct 9)
+            for _ in range(5):
+                wake.read()
+            wake.release()
+        cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW if win else cv2.CAP_AVFOUNDATION)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, cw); cap.set(cv2.CAP_PROP_FRAME_HEIGHT, ch)
+        if win:                            # UVC: MJPG, after the size and with no CAP_PROP_FPS: any other order, or
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))   # setting the fps, gives raw YUY2 at 5 fps at 1280x960
     if not cap.isOpened():
         raise SystemExit(f'could not open {dev}')
-    exposure = FixedRateExposure(cap) if win and a.exposure == 'fixed' else None
+    exposure = FixedRateExposure(cap) if win and a.exposure == 'fixed' and not a.video else None
     state['H'] = load_calib(frame_wh=(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
     dml = win and a.weights.endswith('.onnx') and use_directml()
     model = YOLO(a.weights, task='segment' if '-seg' in str(a.weights) else 'detect')   # round 4 is an outline (segment) model

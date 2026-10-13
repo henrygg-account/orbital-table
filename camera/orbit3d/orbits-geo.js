@@ -302,14 +302,14 @@ function sameBody(B, a, b, kind) {
 // Earth orbit e <-> DRO m. Built outward (s = +1: Earth -> Moon); s = -1 builds the mirror image, which reversed is the
 // trip back. From the periapsis opposite the Moon, apoapsis-raising loops lined up with the Moon, the last apoapsis at
 // the Moon. Where they enter the Moon zone (its Earth side, already heading the DRO's way) a capture curve joins m's DRO:
-// a retrograde spiral for ET (1.25 turns), one curve for GT (half a turn). Returns the Earth-side coast from e to the
+// one curve (half a turn) for ET and GT. Returns the Earth-side coast from e to the
 // periapsis, the path, and the angle where it meets the DRO.
 function lunarLegs(maps, e, m, s, kind) {
   const { E, M } = maps, thP = maps.thM + Math.PI, N = loopsFor(kind, maps.Dmm - e.rho), sm = M.dir * s;
   const earth = clipEnd(maps, apoRaise(E, e.rho, maps.Dmm, thP, s, N, kind === 'gt'));
   const P0 = earth[earth.length - 1], q0 = M.inv(P0[0], P0[1]);
-  const thDro = q0.th + sm * (kind === 'gt' ? Math.PI : TAU * 1.25);
-  const moon = kind === 'gt' ? zoneCurve(maps, P0, dirAt(earth, true), m.r, thDro, sm) : spiral(M, M.r(q0.rho), m.r, q0.th, thDro - q0.th);
+  const thDro = q0.th + sm * Math.PI;   // one half-turn curve for both (the electric one used to wrap 1.25 turns: a loop next to the DRO ring)
+  const moon = zoneCurve(maps, P0, dirAt(earth, true), m.r, thDro, sm);
   return { lead: coastArc(E, e.rho, e.th, sweepTo(e.th, thP, s)), path: fillet(earth, moon), thDro };
 }
 

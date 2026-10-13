@@ -722,11 +722,17 @@ function tick(now) {
   // orbits view: figures bigger than scale (sizes from orbits-geo.js FIG; the lowest orbits hug their edges), Seldons smaller than the old 150 mm, no base rings
   const fig = modes.orbitsLike && modes.orbitsFigures(), TS = modes.drawsBodies;   // true scale: the modes draw Earth and the Moon, the stand-ins go
   models.earth.scale.setScalar(fig ? fig.earth / EARTH_SPHERE_R : 1); models.moon.scale.setScalar(fig ? fig.moon / MOON_SPHERE_R : 1);
-  for (const id of SATS) if (models[id]) models[id].scale.setScalar(fig ? ORB_SELDON_SCALE : SELDON_SCALE);
+  const satS = fig ? (TS ? ORB_SELDON_SCALE * .4 : ORB_SELDON_SCALE) : SELDON_SCALE;   // true scale: Earth is small, so the stand-ins shrink and keep clear of the discs
+  for (const id of SATS) if (models[id]) models[id].scale.setScalar(satS);
   for (const [k, r] of Object.entries(baseRings)) { const P = smooth[k]; r.visible = !!P && !fig && !(TS && (k === 'earth' || k === 'moon')); if (P) r.position.set(P.x, -P.y, 0); }
   for (const [k, g] of Object.entries(models)) {   // live: the printed Earth and Seldons stand there, so no stand-ins under them
     const P = smooth[k]; g.visible = !!P && !(TS && (k === 'earth' || k === 'moon')) && !(liveView() && (k === 'earth' || k === 'moon' || SATS.includes(k))); if (!P) continue;   // live: the printed pieces stand there
     g.position.x = P.x; g.position.y = -P.y; g.rotation.z = g.userData.rot;
+    if (TS && SATS.includes(k)) for (const B of modes.trueBodies) {   // slide the stand-in out of a body's disc
+      if (!B) continue;
+      const d = Math.hypot(P.x - B.x, P.y - B.y) || 1, need = B.r + 50 * satS + 1;
+      if (d < need) { g.position.x = B.x + (P.x - B.x) * need / d; g.position.y = -(B.y + (P.y - B.y) * need / d); }
+    }
   }
   models.earth.userData.spin.rotation.y += dt * .08; models.earth.userData.clouds.rotation.y += dt * .1;
 
