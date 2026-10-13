@@ -12,6 +12,7 @@
 const MU_E = 398600.4418, MU_M = 4902.8, R_E = 6378.1, R_M = 1737.4, L_KM = 384400;
 const R_LEO = R_E + 400, GEO_R = 42164, MOON_SOI = 66100;
 const EARTH_PIECE_R = 33, MOON_PIECE_R = 33;             // 66 mm bases
+const TRUE_FOOT = 33 + 3;   // true scale: Seldon base radius + margin; within Earth's disc + this a Seldon is in LEO (makeTrueMaps)
 const SELDON_BASE_R = 33;                                 // a Seldon can't sit closer to Earth than the two bases touching
 const MODE_NAMES = ['mission', 'intercept', 'dvmap', 'engage', 'orbits', 'geo', 'dro', 'capture', 'competitor'];
 const GROUP = { geo: 'orbits', dro: 'orbits' };            // geo and dro draw with the orbits view's items
@@ -1323,6 +1324,9 @@ export function createModes(ctx) {
   // two rows at the top centre. Recomputed only when a piece moves.
   // the paths are hidden while any piece is being moved; once all is still they are drawn out from Seldon-1 to Seldon-2
   // over TR_DRAW_S, starting TR_WAIT_S after the last piece settles (arrowheads once they arrive; no running dashes, Oct 9)
+  // presenter pause / scrub (show state play, t): paused stops the dots and holds every film frame; seek(f) jumps the film / the drawn transfer to
+  // fraction f (0..1) once (each consumer keeps the last n it saw), then plays on from there unless paused
+  const PL = { paused: false, f: null, n: 0 };
   const TR_DONE = new URLSearchParams(location.search).has('trdone');
   const TR_DRAW_S = 10, TR_WAIT_S = 1, trEase = x => 1 - (1 - x) ** 3;
   const prefix = (pts, cum, f) => {                            // the first f (0..1) of a path by length
@@ -1341,7 +1345,8 @@ export function createModes(ctx) {
     const its = ks.flatMap(k => [T[k], T[k + 'F'], T[k + 'A'], T[k + 'C']]);
     if (!X) { hide(...its, T.read); T.key = null; T.draw = 0; return; }
     if (moving) { hide(...its); T.draw = 0; T.key = null; T.still = 0; }
-    else { T.still = (T.still ?? 0) + dt; if (T.still >= TR_WAIT_S) T.draw = Math.min(1, (T.draw ?? 0) + dt / TR_DRAW_S); }
+    else { T.still = (T.still ?? 0) + dt; if (T.still >= TR_WAIT_S && !PL.paused) T.draw = Math.min(1, (T.draw ?? 0) + dt / TR_DRAW_S); }
+    if (T.seekN !== PL.n) { T.seekN = PL.n; if (PL.f != null && !moving) { T.still = TR_WAIT_S; T.draw = PL.f; } }
     if (TR_DONE && !moving) { T.still = TR_WAIT_S; T.draw = 1; }   // test hook ?trdone: the paths fully drawn (headless runs see few frames)
     const waiting = !moving && T.still < TR_WAIT_S;
     const key = [maps.E.cx, maps.E.cy, maps.M?.cx, maps.M?.cy, a.rho, a.th, b.rho, b.th].map(v => (v ?? 0).toFixed(2)).join();
@@ -1429,7 +1434,7 @@ export function createModes(ctx) {
       if (!b) { hide(OR.ring[k], OR.dot[k], OR.tag[k]); OR.last[k] = null; return; }
       setPts(OR.ring[k], OGEO.orbitPts(b, 256).map(p => W(p[0], p[1])));   // its own shape: a circle, or a DRO about the Moon
       if (OR.last[k] === null || Math.abs(wrapPi(b.th - OR.last[k])) > 1e-3) OR.ang[k] = b.th;   // the piece moved: the dot restarts from it
-      OR.last[k] = b.th; OR.ang[k] += b.dir * b.n * rate * dt;   // DROs run clockwise
+      OR.last[k] = b.th; OR.ang[k] += b.dir * b.n * rate * (PL.paused ? 0 : dt);   // DROs run clockwise
       { const q = OGEO.orbitXY(b, OR.ang[k]); OR.dot[k].obj.position.set(q[0], -q[1], 1); } OR.dot[k].on = true;
       const T = TAU / b.n, col = hex([OC.s1, OC.s2, OC.moon][k]);
       if (k === 2) return;                                          // the Moon: orbit ring only, no label
@@ -1466,7 +1471,7 @@ export function createModes(ctx) {
     const ids = ['seldon-1', 'seldon-2'].filter(id => P[id]).slice(0, geo ? 2 : 1);   // dro: one Seldon (Seldon-1 if both are seen)
     const msg = !E || (!geo && !Mo) ? msgFor(E, Mo, !geo) : !ids.length ? 'Place Seldon-1.' : '';
     if (!E || (!geo && !Mo)) { setRails(mode, { eyebrow: EYE, msg }); hide(OR.trG.et, OR.trG.etA, OR.trG.etC); OR.tr.xk = OR.tr.key = OR.trG.xk = OR.trG.key = null; return; }
-    const e = [E.x_mm, E.y_mm], maps = TS ? OGEO.makeTrueMaps(e, [Mo.x_mm, Mo.y_mm], { noZone: geo }) : geo ? OGEO.makeGeoMaps(e) : OGEO.makeMaps(e, [Mo.x_mm, Mo.y_mm]);
+    const e = [E.x_mm, E.y_mm], maps = TS ? OGEO.makeTrueMaps(e, [Mo.x_mm, Mo.y_mm], { noZone: geo, foot: TRUE_FOOT }) : geo ? OGEO.makeGeoMaps(e) : OGEO.makeMaps(e, [Mo.x_mm, Mo.y_mm]);
     pieceObs = ids.map(id => ({ x: P[id].x_mm, y: P[id].y_mm, r: PIECE_R[id] + TAG_GAP }));
     if (TS) {   // Earth and the Moon drawn at true relative size (the 3D stand-ins are hidden by the page)
       [[E, R_E, 0, 'EARTH'], [Mo, R_M, 1, 'MOON']].forEach(([c, R, i, name]) => {
@@ -1498,7 +1503,8 @@ export function createModes(ctx) {
     const ride = (k, x, ring, dot) => {
       setPts(ring, OGEO.orbitPts(x, 256).map(p => W(p[0], p[1])));
       if (OR.last[k] === null || Math.abs(wrapPi(x.th - OR.last[k])) > 1e-3) OR.ang[k] = x.th;   // the piece moved (or was reset): the dot restarts from it
-      OR.last[k] = x.th; OR.ang[k] += x.dir * x.n * rate * dt;
+      OR.last[k] = x.th; OR.ang[k] += x.dir * x.n * rate * (PL.paused ? 0 : dt);
+      if ((OR.seekN ||= [])[k] !== PL.n) { OR.seekN[k] = PL.n; if (PL.f != null) OR.ang[k] = x.th + x.dir * x.n * rate * PL.f * TR_DRAW_S; }   // the dot where the drawn transfer has got to
       const q = OGEO.orbitXY(x, OR.ang[k]); dot.obj.position.set(q[0], -q[1], 1); dot.on = true;
     };
     if (moonB) ride(2, moonB, OR.ring[2], OR.dot[2]); else OR.last[2] = null;
@@ -1541,7 +1547,7 @@ export function createModes(ctx) {
       return out;
     }
     if (mode === 'geo') {
-      const e = TS ? fixedEM().earth : pc.earth && given.includes('earth') ? pc.earth : { x_mm: SW() / 2, y_mm: SH() / 2 }, maps = TS ? OGEO.makeTrueMaps([e.x_mm, e.y_mm], [fixedEM().moon.x_mm, e.y_mm], { noZone: true }) : OGEO.makeGeoMaps([e.x_mm, e.y_mm]);
+      const e = TS ? fixedEM().earth : pc.earth && given.includes('earth') ? pc.earth : { x_mm: SW() / 2, y_mm: SH() / 2 }, maps = TS ? OGEO.makeTrueMaps([e.x_mm, e.y_mm], [fixedEM().moon.x_mm, e.y_mm], { noZone: true, foot: TRUE_FOOT }) : OGEO.makeGeoMaps([e.x_mm, e.y_mm]);
       if (use('earth')) out.earth = { x_mm: e.x_mm, y_mm: e.y_mm, seen_ago: 0 };
       if (use('moon')) out.moon = null;                          // the Moon is not part of this mode
       if (use('s1')) out['seldon-1'] = at(maps.E, maps.E.rho(OGEO.R_LEO) + (TS ? 4 : 0), 60);
@@ -1549,7 +1555,7 @@ export function createModes(ctx) {
     } else {
       const L = OGEO.LAYOUT, e = given.includes('earth') ? pc.earth : { x_mm: TS ? fixedEM().earth.x_mm : L.earth[0], y_mm: TS ? fixedEM().earth.y_mm : L.earth[1] };
       const m = given.includes('moon') ? pc.moon : { x_mm: TS ? fixedEM().moon.x_mm : L.moon[0], y_mm: TS ? fixedEM().moon.y_mm : L.moon[1] };
-      const maps = TS ? OGEO.makeTrueMaps([e.x_mm, e.y_mm], [m.x_mm, m.y_mm]) : OGEO.makeMaps([e.x_mm, e.y_mm], [m.x_mm, m.y_mm]);
+      const maps = TS ? OGEO.makeTrueMaps([e.x_mm, e.y_mm], [m.x_mm, m.y_mm], { foot: TRUE_FOOT }) : OGEO.makeMaps([e.x_mm, e.y_mm], [m.x_mm, m.y_mm]);
       if (use('earth')) out.earth = { x_mm: e.x_mm, y_mm: e.y_mm, seen_ago: 0 };
       if (use('moon')) out.moon = { x_mm: m.x_mm, y_mm: m.y_mm, seen_ago: 0 };
       if (use('s1')) out['seldon-1'] = at(maps.E, TS ? maps.E.rho(OGEO.R_LEO) + 4 : maps.E.rho(Math.max(OGEO.R_LEO, maps.E.r(EARTH_PIECE_R + SELDON_BASE_R + 2))), 135);
@@ -1578,9 +1584,10 @@ export function createModes(ctx) {
   // film clock: returns animation progress u (0..1) and whether the pieces are settled
   function filmClock(F, key, moving, dt, lead, dur, hold) {
     if (key !== F.key) { F.key = key; F.hold = .8; F.clk = 0; F.fresh = true; }
-    if (moving) { F.hold = .8; F.clk = 0; } else if (F.hold > 0) { F.hold -= dt; F.clk = 0; } else F.clk += dt;
+    if (moving) { F.hold = .8; F.clk = 0; } else if (F.hold > 0) { F.hold -= dt; F.clk = 0; } else if (!PL.paused) F.clk += dt;
     if (F.clk > lead + dur + hold) F.clk = 0;                     // loop
     if (F.reset) { F.reset = false; F.clk = 0; F.hold = 0; }
+    if (F.seekN !== PL.n) { F.seekN = PL.n; if (PL.f != null && !moving) { F.hold = 0; F.clk = lead + PL.f * dur; } }
     if (ctx.engageStart != null && ctx.engageStart !== '' && !isNaN(+ctx.engageStart)) F.clk = +ctx.engageStart;   // test hook ?engt=<s>: freeze the film there
     return Math.max(0, Math.min(1, (F.clk - lead) / dur));
   }
@@ -1830,7 +1837,8 @@ export function createModes(ctx) {
     for (const k of Object.keys(placerKeys)) placerKeys[k] = null;
   }
   applyFonts();
-  return { update, setMode, onLayout, setOpts, reset: () => { reset(); resetFilm(); }, get mode() { return current; }, boxRect, setTopo: v => { topo = !!v; }, get topo() { return topo; },
+  return { update, setMode, onLayout, setOpts, reset: () => { reset(); resetFilm(); }, setPlay: on => { PL.paused = !on; }, seek: f => { PL.f = Math.max(0, Math.min(1, +f || 0)); PL.n++; }, get paused() { return PL.paused; },
+    get testState() { return { capture: CP.clk, competitor: KP.clk, geoDraw: OR.trG.draw, geoAng: OR.ang[0], lead: { capture: CAP_LEAD, competitor: CMP_LEAD }, speed: { capture: OPT.capture.speed, competitor: OPT.competitor.speed } }; }, /* test hook (tools/test_control.py): film clocks (s), the drawn-out transfer (0..1), the dot angle */ get mode() { return current; }, boxRect, setTopo: v => { topo = !!v; }, get topo() { return topo; },
     setBudget: v => { budget = Math.max(0, Math.min(DV_MAX, +v)); }, get budget() { return budget; }, trackY: yForBudget, DV_MAX, engChips, get viewZoom() { return current === 'engage' ? (ENG.zoomNow ?? 1) : 1; }, get scale() { return scaleMode; }, get trueScale() { return scaleMode === 'true'; }, setScale, gdDemo, get orbitsLike() { return grp() === 'orbits' || current === 'capture' || current === 'competitor'; }, get drawsBodies() { return scaleMode === 'true' && (current === 'geo' || current === 'dro'); },
     titles: Object.fromEntries(MODE_NAMES.map((m, i) => [m, MODE_TITLES[i]])), get handMode() { return current === 'engage' || (current === 'orbits' && OR.zoomOn); }, orbitsDemo: (pc, noMoon) => orbitsDemo(pc, noMoon),
     get trueBodies() { return OR.trueB || []; },   // true scale: the drawn Earth and Moon {x, y, r} in mm (the page keeps its Seldon stand-ins clear of them)

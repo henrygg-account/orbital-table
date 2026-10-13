@@ -563,6 +563,7 @@ modes = createModes({
   initialMode: Q.get('mode') || undefined, missionUrl: Q.get('mission') || undefined,
   engageUrl: Q.get('engage') || undefined, engageScenario: Q.get('scenario') || undefined, engageScale: Q.get('kmpermm') ? +Q.get('kmpermm') : undefined, engageStart: Q.get('engt') || undefined,
 });
+if (Q.has('testhook')) window.__t = () => ({ modes, pieces, smooth, SHOW });   // test hook (camera/orbit3d/tools/test_control.py reads what is drawn)
 if (Q.get('scale') === 'true') modes.setScale('true');   // test hook: true scale from the start (the presenter's button does it live)
 { const b = modes.boxRect(Q.get('chip') != null ? +Q.get('chip') : 0); pieces.chip = { x_mm: b.cx, y_mm: b.cy, seen_ago: 0 }; }
 // engagement mode: Earth sits at the table centre and the Moon is set aside (demo stand-ins; on the real table, move the pieces).
@@ -619,7 +620,7 @@ addEventListener('keydown', e => {
 // ================================================================ PRESENTER (show state) ================================================================
 // The tablet (presenter.html) and the keys below post to live.py's /show; it comes back as feed.show (contract: NIGHT-AGENTS.md). Without live.py
 // the keys and ?show=mode:dro,scale:true,freeze:1,sky:off apply here. Modes expose optional hooks: setMode, setScale, setOpts(mode, opts), reset.
-const SHOW = { mode: null, scale: 'show', freeze: false, sky: 'still', reset: null, mode_opts: {} };
+const SHOW = { mode: null, scale: 'show', freeze: false, sky: 'still', reset: null, mode_opts: {}, play: true, t: null };   // play false: dots stop, films hold; t: scrub position (modes.seek, once per change)
 window.SHOW_SKY = 'still';                                  // the sky code reads this: 'still' | 'slow' | 'off'
 const showFrozen = () => SHOW.freeze;                       // frozen: feed piece updates are ignored (the tick below checks this)
 const frozenEl = document.body.appendChild(Object.assign(document.createElement('div'), { className: 'mt mt-eyebrow', textContent: 'FROZEN' }));
@@ -633,9 +634,12 @@ function applyShow(s) {
   if (s.mode_opts) { SHOW.mode_opts = s.mode_opts; const o = s.mode_opts[SHOW.mode], j = JSON.stringify(o); if (o && j !== optsSent) { optsSent = j; modes.setOpts?.(SHOW.mode, o); } }
   if (s.reset != null) { if (SHOW.reset != null && s.reset !== SHOW.reset) modes.reset?.(); SHOW.reset = s.reset; }   // the first value seen is not a press
   if (s.freeze != null) SHOW.freeze = !!s.freeze;
+  if (s.play != null && !!s.play !== SHOW.play) { SHOW.play = !!s.play; modes.setPlay?.(SHOW.play); }
+  if (s.t !== undefined && s.t !== SHOW.t) { SHOW.t = s.t; if (s.t != null) modes.seek?.(s.t); }
   if (s.sky && s.sky !== SHOW.sky) { SHOW.sky = s.sky; window.SHOW_SKY = s.sky; skyDome.visible = s.sky !== 'off'; }
   if (JSON.stringify(SHOW) === prev) return;
-  frozenEl.style.display = SHOW.freeze ? '' : 'none';
+  frozenEl.textContent = SHOW.freeze ? 'FROZEN' : 'PAUSED';
+  frozenEl.style.display = SHOW.freeze || !SHOW.play ? '' : 'none';
   put(frozenEl, END === 'right' ? SW - MARG - 16 : MARG + 16, SH - 70);   // presenter's end
   frozenEl.style.transform = `translate(-50%,-50%) rotate(${END === 'right' ? -90 : 90}deg)`;
 }
@@ -643,7 +647,7 @@ function postShow(patch) {                                  // live.py is the so
   if (online()) fetch('/show', { method: 'POST', body: JSON.stringify(patch) }).then(r => r.json()).then(applyShow).catch(() => applyShow(patch));
   else applyShow(patch);
 }
-if (Q.get('show')) { const o = {}; for (const kv of Q.get('show').split(',')) { const [k, v] = kv.split(':'); o[k] = k === 'freeze' ? v === '1' : v; } applyShow(o); }   // test hook
+if (Q.get('show')) { const o = {}; for (const kv of Q.get('show').split(',')) { const [k, v] = kv.split(':'); o[k] = k === 'freeze' || k === 'play' ? v === '1' : k === 't' ? +v : v; } applyShow(o); }   // test hook
 addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toLowerCase(), M = ['geo', 'capture', 'dro', 'competitor'];
@@ -651,6 +655,7 @@ addEventListener('keydown', e => {
   else if (k === 't' && !e.shiftKey) postShow({ scale: SHOW.scale === 'true' ? 'show' : 'true' });
   else if (k === 'f' && !e.shiftKey) postShow({ freeze: !SHOW.freeze });
   else if (k === 'r') postShow({ reset: true });
+  else if (e.key === ' ') { e.preventDefault(); postShow(SHOW.play ? { play: false } : { play: true, t: null }); }   // Space: pause / play
   else if (k === 's' && !e.shiftKey) postShow({ sky: { still: 'slow', slow: 'off', off: 'still' }[SHOW.sky] });
 });
 // ================================================================ /PRESENTER ================================================================

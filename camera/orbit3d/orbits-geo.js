@@ -71,7 +71,11 @@ export function makeGeoMaps(earth, S = GEO_VIEW) {
 export function makeTrueMaps(earth, moon, S = {}) {
   const [ex, ey] = earth, Dmm = Math.hypot(moon[0] - ex, moon[1] - ey), k = Dmm / D_EM, thM = Math.atan2(-(moon[1] - ey), moon[0] - ex);
   const lin = (cx, cy, mu, R) => withXY({ cx, cy, mu, R, off: 0, rho: r => r * k, r: rho => rho / k });
-  return { E: lin(ex, ey, MU_E, R_E), M: droStretch(lin(moon[0], moon[1], MU_M, R_M), thM), Dmm, zone: S.noZone ? 0 : R_SOI * k, k, thM, scaleTrue: true };
+  // Earth's map: a physical Seldon touching the Earth disc stands foot (mm) + the disc's radius from Earth's centre, which at this
+  // scale is ~10,000 km up. So everything inside that radius (rho0) is LEO (400 km), and the altitude scale starts from there.
+  const rho0 = Math.max(R_LEO * k, R_E * k + (S.foot || 0)), E = S.foot > 0 ? lin(ex, ey, MU_E, R_E) : null;
+  if (E) Object.assign(E, { rho: r => r >= R_LEO ? rho0 + (r - R_LEO) * k : r * rho0 / R_LEO, r: rho => rho > rho0 ? R_LEO + (rho - rho0) / k : R_LEO });
+  return { E: E || lin(ex, ey, MU_E, R_E), M: droStretch(lin(moon[0], moon[1], MU_M, R_M), thM), Dmm, zone: S.noZone ? 0 : R_SOI * k, k, thM, scaleTrue: true };
 }
 // GEO lock: a body within `band` mm (drawn) of the GEO ring snaps onto it; once locked it holds until 1.4 x band away
 export function lockGeo(maps, b, was, band) {

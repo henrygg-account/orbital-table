@@ -381,7 +381,7 @@ class CalibRequest:
 # The presenter's controls (presenter.html, or keys on the TV page): one object, broadcast in every /events message.
 # Kept in memory and in show.json (gitignored) so a restart of live.py keeps the mode. Contract: NIGHT-AGENTS.md.
 SHOW_JSON = HERE / 'show.json'
-SHOW_DEFAULT = {'mode': 'geo', 'scale': 'show', 'freeze': False, 'sky': 'still', 'reset': 0, 'mode_opts': {}, 'beat': 0}   # beat: run-of-show position (presenter.html only; the table ignores it)
+SHOW_DEFAULT = {'mode': 'geo', 'scale': 'show', 'freeze': False, 'sky': 'still', 'reset': 0, 'mode_opts': {}, 'beat': 0, 'play': True, 't': None}   # beat: run-of-show position (presenter.html only; the table ignores it). play: false = films and dots hold; t: scrub position 0..1 (null = none)
 SHOW_CHOICES = {'mode': ('geo', 'capture', 'dro', 'competitor'), 'scale': ('show', 'true'), 'sky': ('still', 'slow', 'off')}
 show = json.loads(json.dumps(SHOW_DEFAULT))
 show_lock = threading.Lock()
@@ -390,7 +390,7 @@ show_lock = threading.Lock()
 def show_load():
     try:
         saved = json.loads(SHOW_JSON.read_text())
-        show_update({k: v for k, v in saved.items() if k != 'reset'}, save=False)   # a restart is not a reset
+        show_update({k: v for k, v in saved.items() if k not in ('reset', 'play', 't')}, save=False)   # a restart is not a reset, and starts playing
         show['reset'] = int(saved.get('reset', 0))
     except (OSError, ValueError, AttributeError):
         pass
@@ -401,7 +401,13 @@ def show_update(patch, save=True):
     with show_lock:
         for k, ok in SHOW_CHOICES.items():
             if patch.get(k) in ok:
+                if k == 'mode' and patch[k] != show['mode']:
+                    show['play'], show['t'] = True, None   # a new mode starts playing from its beginning
                 show[k] = patch[k]
+        if isinstance(patch.get('play'), bool):
+            show['play'] = patch['play']
+        if 't' in patch and (patch['t'] is None or (type(patch['t']) in (int, float) and 0 <= patch['t'] <= 1)):
+            show['t'] = patch['t']   # (NaN fails the range test)
         if isinstance(patch.get('freeze'), bool):
             show['freeze'] = patch['freeze']
         if type(patch.get('beat')) is int and 0 <= patch['beat'] < 100:

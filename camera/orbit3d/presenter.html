@@ -29,6 +29,8 @@
   .seg button { flex: 1; height: 52px; font-size: 13px; border-radius: 999px; padding: 0 10px; }
   .big { height: 56px; font-size: 13px; width: 100%; border-radius: 999px; }
   .big.frz.on { border-color: var(--adv); color: var(--adv); background: rgba(226,96,79,.12); }
+  .big.pp { height: 76px; font-size: 20px; } .ctl .big.pp { height: 76px; }
+  .big.pp.on { border-color: var(--ours); color: var(--ours); background: rgba(14,227,166,.12); }
   .row { display: flex; gap: 12px; align-items: center; }
   .lbl { font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin: 2px 0 8px; display: flex; justify-content: space-between; }
   .lbl .v { color: #f6f8f8; font-family: var(--font-display); font-size: 16px; letter-spacing: 0; text-transform: none; }
@@ -108,6 +110,7 @@
     <div class="tabs" id="tabs"><button data-t="ctl" class="on">Controls</button><button data-t="qs">Questions</button></div>
     <div class="pane" id="p-ctl">
       <div class="ctl">
+        <div id="playbox"><h2>Playback</h2><button class="big pp" id="pp">Pause</button><input type="range" id="scrub" min="0" max="1000" value="0" aria-label="Scrub the film"></div>
         <div><h2>Scale</h2><div class="seg" id="scale"></div></div>
         <div><h2>Table</h2><div class="row"><button class="big frz" id="freeze" style="flex:2">Freeze pieces</button><button class="big" id="reset" style="flex:1">Reset</button></div></div>
         <div><h2>Sky</h2><div class="seg" id="sky"></div></div>
@@ -150,8 +153,10 @@ const OPTS = {
   ],
 };
 
-let show = { mode: 'geo', scale: 'show', freeze: false, sky: 'still', reset: 0, mode_opts: {}, beat: 0 }, live = false, lastMsg = 0;
+let show = { mode: 'geo', scale: 'show', freeze: false, sky: 'still', reset: 0, mode_opts: {}, beat: 0, play: true, t: null }, live = false, lastMsg = 0;
 const $ = id => document.getElementById(id);
+let scrubbing = false;
+const FILM_MODES = ['geo', 'capture', 'dro', 'competitor'];   // all four have something to pause and scrub
 const titleOf = m => (MODES.find(x => x[0] === m) || [0, m])[1];
 
 function seg(el, items, cur, onPick) {
@@ -160,7 +165,7 @@ function seg(el, items, cur, onPick) {
 }
 // A live.py without `beat` leaves it out of /show: keep the local copy so the run of show still works.
 let localBeat = 0;
-function setShow(s) { if (Number.isInteger(s.beat)) localBeat = s.beat; else s.beat = localBeat; show = s; render(); }
+function setShow(s) { if (Number.isInteger(s.beat)) localBeat = s.beat; else s.beat = localBeat; if (typeof s.play !== 'boolean') s.play = show.play; show = s; render(); }   // (same for an old live.py without play / t)
 function post(patch) {   // optimistic: the buttons answer at once; the next /events message confirms
   fetch(BASE + '/show', { method: 'POST', body: JSON.stringify(patch) }).then(r => r.json()).then(s => { setShow(s); }).catch(() => { $('conn').textContent = 'Not reaching live.py'; });
   if (Number.isInteger(patch.beat)) localBeat = patch.beat;
@@ -192,6 +197,9 @@ function render() {
   document.querySelectorAll('#modes button').forEach((b, i) => { b.className = 'mode' + (MODES[i][0] === show.mode ? ' on' : ''); b.innerHTML = `${MODES[i][1]}<i>${i + 1}</i>`; });
   seg($('scale'), SCALES, show.scale, v => post({ scale: v }));
   seg($('sky'), SKIES, show.sky, v => post({ sky: v }));
+  $('pp').className = 'big pp' + (show.play ? '' : ' on'); $('pp').textContent = show.play ? 'Pause' : 'Play';
+  if (show.t != null && !scrubbing) $('scrub').value = Math.round(show.t * 1000);
+  $('scrub').disabled =!FILM_MODES.includes(show.mode); $('playbox').hidden = $('scrub').disabled;
   $('freeze').className = 'big frz' + (show.freeze ? ' on' : ''); $('freeze').textContent = show.freeze ? 'Frozen: tap to release' : 'Freeze pieces';
   renderOpts();
   $('st-mode').textContent = titleOf(show.mode); $('st-scale').textContent = show.scale === 'true' ? 'True' : 'Show';
@@ -273,6 +281,13 @@ $('tabs').onclick = e => {
 fetch('show-notes.json').then(r => r.json()).then(j => { BEATS = j.beats || []; QS = j.questions || []; notesKey = ''; renderQs(); render(); }).catch(() => render());
 
 $('freeze').onclick = () => post({ freeze: !show.freeze });
+// Pause holds the films and the dots where they are; the slider scrubs (it pauses first); Play goes on from the frame shown.
+$('pp').onclick = () => post(show.play ? { play: false } : { play: true, t: null });
+{ const s = $('scrub'); let last = 0, timer = 0;
+  s.onpointerdown = () => { scrubbing = true; }; addEventListener('pointerup', () => { scrubbing = false; });
+  const send = () => { clearTimeout(timer); timer = 0; last = Date.now(); post({ play: false, t: +s.value / 1000 }); };
+  s.oninput = () => { if (Date.now() - last >= 100) send(); else if (!timer) timer = setTimeout(send, 100 - (Date.now() - last)); };   // ~10 posts a second while dragging
+  s.onchange = send; }
 $('reset').onclick = () => post({ reset: true });
 if (HOST) $('adv').href = `http://${HOST}/control.html`;
 
