@@ -44,6 +44,9 @@
   input[type=range]::-moz-range-thumb { width: 34px; height: 34px; border-radius: 50%; background: #f6f8f8; border: 0; }
   .ends { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
   .note { font-size: 13px; color: var(--dim); min-height: 1.2em; }
+  .recal { height: 50px; font-size: 12px; color: var(--dim); }
+  .recal.arm { border-color: #f6f8f8; color: #f6f8f8; }
+  .recal.busy { opacity: .5; }
 </style>
 </head>
 <body>
@@ -57,6 +60,8 @@
     <div class="ends"><span>Wide</span><span>Close</span></div>
   </div>
   <div class="note" id="note"></div>
+  <button class="toggle recal" id="recal">Recalibrate</button>
+  <div class="note" id="rnote"></div>
 </div>
 <script>
 const MODES = [['geo', 'LEO to GEO'], ['capture', 'Capture / Defend'], ['dro', 'LEO to DRO'], ['competitor', 'Competitor']];
@@ -91,6 +96,21 @@ $('scale').onclick = () => post({ scale: show.scale === 'true' ? 'show' : 'true'
   z.oninput = () => { $('zv').textContent = `${(+z.value / 100).toFixed(1)}×`; if (Date.now() - last >= 100) send(); else if (!timer) timer = setTimeout(send, 100 - (Date.now() - last)); };
   z.onchange = () => { dragging = false; send(); }; }
 
+// Recalibrate from the white squares on the TV's corners (live.py /calibrate_squares): tap, then tap again within 3 s.
+{ const b = $('recal'), n = $('rnote'); let armed = 0, busy = false;
+  const reset = () => { armed = 0; b.className = 'toggle recal'; b.textContent = 'Recalibrate'; };
+  b.onclick = async () => {
+    if (busy) return;
+    if (!armed) { armed = setTimeout(reset, 3000); b.className = 'toggle recal arm'; b.textContent = 'Tap again: keep hands off the corners'; return; }
+    clearTimeout(armed); busy = true; b.className = 'toggle recal busy'; b.textContent = 'Recalibrating'; n.textContent = '';
+    try {
+      const r = await (await fetch(BASE + '/calibrate_squares', { method: 'POST', body: '{}' })).json();
+      n.textContent = r.ok ? `Calibrated: the screen moved ${r.moved_px} px.` : `Not calibrated: ${r.error}.`;
+      n.style.color = r.ok ? 'var(--mint)' : '#e2604f';
+    } catch { n.textContent = 'Not calibrated: the table did not answer.'; n.style.color = '#e2604f'; }
+    busy = false; reset();
+  };
+}
 function connect() {
   const es = new EventSource(BASE + '/events');
   es.onmessage = e => { lastMsg = Date.now(); try { const f = JSON.parse(e.data); if (f.show && !dragging) { show = f.show; render(); } } catch {} };

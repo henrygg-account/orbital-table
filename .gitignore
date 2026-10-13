@@ -17,6 +17,7 @@ camera/training/weights/
 *.pt
 *.mlpackage/
 camera/training/calib.json
+camera/training/squares.json
 camera/training/tuning.json
 camera/training/replay/
 

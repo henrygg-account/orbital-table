@@ -136,4 +136,13 @@ assert r['mode'] == 'capture' and r['reset'] == 2
 c.request('GET', '/show'); assert json.loads(c.getresponse().read()) == r
 c.request('POST', '/show', '{nope'); assert c.getresponse().status == 400
 srv.shutdown()
+
+# --- white bezel squares: a 5 px square on a noisy grey floor is found to sub-pixel accuracy, a brighter speck farther off is not taken
+rng = np.random.default_rng(1)
+g = np.clip(70 + rng.normal(0, 4, (200, 200)), 0, 255).astype(np.uint8)
+g[100:105, 120:125] = 135                                   # the square, centre (122, 102)
+g[70:72, 140:142] = 250                                     # a speck 36 px from the guess, outside the search window
+s = live.find_square(g, 118, 98)
+assert s is not None and abs(s[0] - 122) < .6 and abs(s[1] - 102) < .6, s
+assert live.find_square(g, 30, 30) is None                  # nothing there
 print('ok')

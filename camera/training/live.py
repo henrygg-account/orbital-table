@@ -343,6 +343,74 @@ def corner_calibration(corners, bezel, screen_mm):
     return cv2.getPerspectiveTransform(np.float32(corners).reshape(4, 2), mm)
 
 
+# Quick recalibration from four small white squares stuck on the TV bezel's corners (the screen itself is behind the
+# polarising film, so on-screen codes can't be seen). squares.json holds where they are in screen mm, learned once from a
+# good calibration; a recalibration finds each one near where the current calibration puts it, in several frames, and fits
+# the camera -> screen mapping to the four. The squares are ~5 px: only small blobs near the expected spot count.
+SQUARES_JSON = HERE / 'squares.json'
+SQ_SEARCH_PX = 25        # look this far (camera px at 1280 wide) around where each square should be
+SQ_MAX_MOVE_PX = 60      # refuse a result that moves the screen's corners more than this (a square mistaken for something)
+TV_BEZEL_MM = {'side': 13.46, 'top': 13.46, 'bottom': 18.70}   # learn: the squares sit near the TV body's corners
+
+
+def find_square(gray, u, v, r=SQ_SEARCH_PX):
+    """The white square nearest camera px (u, v): a small blob brighter than its own surroundings -> (x, y) px or None."""
+    h, w = gray.shape
+    x0, y0, x1, y1 = max(0, int(u) - r), max(0, int(v) - r), min(w, int(u) + r + 1), min(h, int(v) + r + 1)
+    if x1 - x0 < 5 or y1 - y0 < 5:
+        return None
+    win = gray[y0:y1, x0:x1]
+    top = win.astype(np.float32) - cv2.medianBlur(win, 15).astype(np.float32)   # bright detail on its background
+    thr = max(25.0, 0.5 * float(top.max()))
+    n, lab, st, _ = cv2.connectedComponentsWithStats((top >= thr).astype(np.uint8))
+    best, bd = None, np.inf
+    for k in range(1, n):
+        if not 2 <= st[k, cv2.CC_STAT_AREA] <= 150:
+            continue
+        ys, xs = np.nonzero(lab == k)
+        wt = top[ys, xs]
+        cx, cy = x0 + (xs * wt).sum() / wt.sum(), y0 + (ys * wt).sum() / wt.sum()
+        d = np.hypot(cx - u, cy - v)
+        if d < bd:
+            best, bd = (float(cx), float(cy)), d
+    return best
+
+
+def square_calibration(frames, H, screen_mm, learn=False):
+    """frames: a few camera frames; H: the current calibration. learn: find the squares near the TV body's corners and save
+    where they are (screen mm); else recalibrate from them. -> (H, info) or raises ValueError (naming the square)."""
+    W, Hh = screen_mm
+    Hi = np.linalg.inv(H)
+    cam = lambda x, y: (lambda p: (p[0] / p[2], p[1] / p[2]))(Hi @ [x, y, 1])
+    names = ['top-left', 'top-right', 'bottom-right', 'bottom-left']
+    if learn:
+        sd, tp, bt = TV_BEZEL_MM['side'], TV_BEZEL_MM['top'], TV_BEZEL_MM['bottom']
+        guess_mm = [(-sd, -tp), (W + sd, -tp), (W + sd, Hh + bt), (-sd, Hh + bt)]
+    else:
+        if not SQUARES_JSON.exists():
+            raise ValueError('no squares.json yet: learn the squares once from a good calibration')
+        guess_mm = json.loads(SQUARES_JSON.read_text())['squares_mm']
+    grays = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames]
+    px = []
+    for name, (x, y) in zip(names, guess_mm):
+        u, v = cam(x, y)
+        hits = [h for h in (find_square(g, u, v) for g in grays) if h is not None]
+        if len(hits) < max(2, len(grays) // 3):
+            raise ValueError(f'{name} white square not found (seen in {len(hits)} of {len(grays)} frames)')
+        px.append(tuple(np.median(np.float32(hits), axis=0)))
+    if learn:
+        sq = [tuple(float(c) for c in (lambda p: (p[0] / p[2], p[1] / p[2]))(H @ [u, v, 1])) for u, v in px]
+        SQUARES_JSON.write_text(json.dumps({'squares_mm': sq, 'px': [list(map(float, p)) for p in px], 't': time.time()}))
+        return H, {'learned': [[round(c, 1) for c in q] for q in sq]}
+    Hn = cv2.getPerspectiveTransform(np.float32(px), np.float32(guess_mm))
+    corners = [(0, 0), (W, 0), (W, Hh), (0, Hh)]
+    Hni = np.linalg.inv(Hn)
+    moved = max(np.hypot(*(np.subtract(cam(x, y), (lambda p: (p[0] / p[2], p[1] / p[2]))(Hni @ [x, y, 1])))) for x, y in corners)
+    if moved > SQ_MAX_MOVE_PX:
+        raise ValueError(f'the screen would move {moved:.0f} px: a square was probably mistaken (camera moved a lot? recalibrate by hand)')
+    return Hn, {'moved_px': round(float(moved), 1)}
+
+
 def save_calib(H, screen_mm, path=None, frame_wh=None):
     c = {'H': np.asarray(H).tolist(), 'screen_mm': screen_mm, 't': time.time()}
     if frame_wh:
@@ -545,6 +613,25 @@ class Handler(BaseHTTPRequestHandler):
                     with lock:
                         state['H'] = H
                     res = {'ok': True}
+                except Exception as e:
+                    res = {'ok': False, 'error': str(e)}
+                return self._send(json.dumps(res).encode(), 'application/json')
+            if self.path.split('?')[0] == '/calibrate_squares':  # quick: the white squares on the bezel (presenter.html)
+                try:
+                    body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or b'{}')
+                    if state['H'] is None or not state.get('grab'):
+                        raise ValueError('needs a camera and a calibration to start from')
+                    frames, seq = [], 0
+                    for _ in range(10):                          # ~10 frames (~0.4 s): each square must show in a few
+                        seq, f = state['grab'].next(seq)
+                        if f is not None:
+                            frames.append(f.copy())
+                    H, info = square_calibration(frames, np.asarray(state['H']), state['cfg']['screen_mm'], learn=bool(body.get('learn')))
+                    if not body.get('learn'):
+                        save_calib(H, state['cfg']['screen_mm'], frame_wh=state.get('frame_wh'))
+                        with lock:
+                            state['H'] = H
+                    res = {'ok': True, **info}
                 except Exception as e:
                     res = {'ok': False, 'error': str(e)}
                 return self._send(json.dumps(res).encode(), 'application/json')
