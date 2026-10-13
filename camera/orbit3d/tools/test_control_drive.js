@@ -9,6 +9,7 @@ const drawn = k => { const s = T().smooth[k]; return s ? [s.x, s.y] : null; };
 const d2 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 async function until(cond, what, ms = 60000) { const t0 = performance.now(); while (performance.now() - t0 < ms) { try { if (cond()) return true; } catch {} await sleep(50); } throw new Error('timed out waiting for ' + what); }
 const out = [];
+const pageErrors = []; addEventListener('error', e => pageErrors.push(String(e.message)));   // anything a mode throws while drawing
 const check = (name, ok, detail) => { out.push({ name, ok: !!ok, detail }); };
 async function section(name, fn) { try { await fn(); } catch (e) { check(name + ' (aborted)', false, String(e && e.message || e)); } }
 
@@ -90,4 +91,5 @@ await section('true-scale LEO', async () => {
   { const b = G.bodyAt(maps, 150 + touch, 400); check('true scale: a Seldon touching Earth is drawn on the true LEO ring', Math.abs(b.rho - G.R_LEO * k) < 0.01, `${b.rho.toFixed(2)} mm`); }
 });
 
+check('no errors on the page in any mode', !pageErrors.length, pageErrors.slice(0, 3).join(' | ') || 'none');
 await J('/result', out);

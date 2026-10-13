@@ -1500,8 +1500,8 @@ export function createModes(ctx) {
       else GD.peer = -1;
     } else GD.peer = -1;
     // reference rings (fog, dashed)
-    if (geo || TS) refRing(OR.geo, OR.geoL, maps, OGEO.R_GEO, 'GEO');
-    if (geo && maps.E.rho(OGEO.R_GEO) - maps.E.rho(OGEO.R_LEO) >= LEO_GAP) refRing(OR.leo, OR.leoL, maps, OGEO.R_LEO, 'LEO');
+    refRing(OR.geo, OR.geoL, maps, OGEO.R_GEO, 'GEO');                       // LEO and GEO in both modes (LEO TO DRO too, Oct 13)
+    if (maps.E.rho(OGEO.R_GEO) - maps.E.rho(OGEO.R_LEO) >= LEO_GAP) refRing(OR.leo, OR.leoL, maps, OGEO.R_LEO, 'LEO'); else hide(OR.leo, OR.leoL);
     // the way on: from the first Seldon to the second (geo) or to GEO / the DRO (nothing if it is there already)
     const a = bodies[0]; let b = bodies[1], to = null;
     if (a && !b && !a.locked) { b = OGEO.targetBody(maps, a, geo ? 'E' : 'M', geo ? OGEO.R_GEO : GD.droKm); to = geo ? 'GEO' : 'DRO'; }
@@ -1702,7 +1702,9 @@ export function createModes(ctx) {
   KD.lblTgt = mkText('competitor', 'mt-label', .9); KD.tagU = mkText('competitor', 'mt-label', .95); KD.tagT = mkText('competitor', 'mt-label', .95);
   KD.lblU = mkText('competitor', 'mt-label', .8); KD.lblT = mkText('competitor', 'mt-label', .8);
   KD.foot = [mkText('competitor', 'mt-foot', 1), mkText('competitor', 'mt-foot', 1)];
-  const KD_ALL = [KD.leo, KD.tgt, KD.usP, KD.usF, KD.thP, KD.thF, KD.dotU, KD.dotT, ...KD.b, KD.lblTgt, KD.tagU, KD.tagT, KD.lblU, KD.lblT, ...KD.foot];
+  KD.geo = mkLine('competitor', 'ref'); KD.pr = [0, 1].map(() => mkLine('competitor', 'target'));   // GEO; one ring through each Seldon piece
+  KD.lblLeo = mkText('competitor', 'mt-label', .8); KD.lblGeo = mkText('competitor', 'mt-label', .8);
+  const KD_ALL = [KD.geo, ...KD.pr, KD.lblLeo, KD.lblGeo, KD.leo, KD.tgt, KD.usP, KD.usF, KD.thP, KD.thF, KD.dotU, KD.dotT, ...KD.b, KD.lblTgt, KD.tagU, KD.tagT, KD.lblU, KD.lblT, ...KD.foot];
   const hexCss = n => '#' + n.toString(16).padStart(6, '0');
   const CMP_LEAD = 2, CMP_HOLD = 9;
 
@@ -1741,20 +1743,20 @@ export function createModes(ctx) {
       S.mm = mm; setPts(KD.usP, S.usPts); setPts(KD.thP, S.thPts); setPts(KD.leo, circPts(ex, ey, rho0, 128)); setPts(KD.tgt, circPts(ex, ey, rhoT, 192));
       KP.S = S;
     }
-    const S = KP.S, { cmp } = S, fU = f, fT = Math.min(1, f / S.ratio);
-    const pu = S.spiral(fU), pt = S.thAt(fT);
-    const n = Math.max(2, Math.ceil(400 * fU)); if (fU > .002) setRoute(KD.usF, S.usPts.slice(0, n + 1)); else hide(KD.usF);
-    if (fT > .002) setPts(KD.thF, sampleC(S.hc, 0, S.h.tof * fT, Math.max(8, Math.ceil(200 * fT)), S.mm)); else hide(KD.thF);
-    KD.dotU.obj.position.set(pu[0], -pu[1], 1); KD.dotU.on = true; KD.dotT.obj.position.set(pt[0], -pt[1], 1); KD.dotT.on = true;
-    // the two tug burns (start and arrival), and the labels
-    const bp = [S.thAt(0), S.thAt(1)];
-    KD.b.forEach((b, i) => { setPts(b, circPts(bp[i][0], bp[i][1], MARK_R * 1.4, 28)); b.dim = (i === 0 ? fT > 0 : fT >= 1) ? 1 : .45; b.obj.material.color.set(COMP.colThem); });
-    const tagAt = (it, p, d, html, col) => { const [x, y] = outward(p[0], p[1], ex, ey, d); setText(it, `<span style="color:${col}">${html}</span>`); place(it, x, y, 'cm', faceRot(y)); };
-    tagAt(KD.tagU, pu, 15, `US · T+ ${fmtDur(fU * cmp.us.time, false)}`, hexCss(C.mint));
-    tagAt(KD.tagT, pt, -15, `TUG · T+ ${fmtDur(fT * cmp.them.time, false)}`, hexCss(COMP.colThem));
-    { const pa = [ex + S.rhoT * Math.cos(th0 + Math.PI + .5), ey - S.rhoT * Math.sin(th0 + Math.PI + .5)]; const tl = preset === 'geo' ? 'GEO' : preset === 'dro' ? 'DRO' : Math.round(rT - CGEO.R_E).toLocaleString('en-US') + ' km up'; tagAt(KD.lblTgt, pa, 13, `TARGET · ${tl}${preset === 'geo' ? ' · 35,786 km' : ''}`, '#f6f8f8'); }
-    { const mid = S.usPts[260]; tagAt(KD.lblU, [mid.x, -mid.y], 12, 'ELECTRIC SPIRAL', hexCss(C.mint)); const m2 = S.thAt(.5); tagAt(KD.lblT, m2, -4, 'HOHMANN TRANSFER', hexCss(COMP.colThem)); }
-    footNote(KD.foot, 'Not to scale. Spiral is a schematic.');
+    // the map: LEO, GEO and the orbit of each Seldon piece, nothing else (owner, Oct 13): the comparison is in the rails, not in
+    // drawn transfers. (The film clock still runs, so pause / scrub / reset keep working; nothing on the map depends on it.)
+    const S = KP.S, { cmp } = S;
+    hide(KD.usP, KD.usF, KD.thP, KD.thF, KD.dotU, KD.dotT, ...KD.b, KD.tagU, KD.tagT, KD.lblU, KD.lblT, KD.lblTgt, KD.tgt);
+    const rhoG = CGEO.rhoOfR(CGEO.R_GEO);
+    setPts(KD.geo, circPts(ex, ey, rhoG, 192));
+    const tagAt = (it, q, a, html) => { const x = ex + q * Math.cos(a), y = ey - q * Math.sin(a), [ox, oy] = outward(x, y, ex, ey, 10); setText(it, html); place(it, ox, oy, 'cm', faceRot(oy)); };
+    tagAt(KD.lblLeo, S.rho0, -Math.PI / 4, 'LEO'); tagAt(KD.lblGeo, rhoG, -Math.PI / 4, 'GEO');
+    ['seldon-1', 'seldon-2'].forEach((k, i) => {
+      const q = P[k] && Math.hypot(P[k].x_mm - ex, P[k].y_mm - ey);
+      if (!q) { hide(KD.pr[i]); return; }
+      setPts(KD.pr[i], circPts(ex, ey, P[k] === pc ? S.rhoT : q, 192));   // the target piece's ring is its (GEO-locked) target orbit
+    });
+    footNote(KD.foot, 'Not to scale.');
     // rails: hero = propellant saved, then each side's delta-v, propellant and trip time
     const saved = Math.round(cmp.saved), side = (nm, col, r) => `<div class="xf"><div class="eyebrow" style="color:${col}">${nm}</div><div class="xf-mets">`
       + `<div class="metric"><div class="ml">DELTA-V</div><div class="mv">${num(r.dv)}<i>km/s</i></div></div>`
