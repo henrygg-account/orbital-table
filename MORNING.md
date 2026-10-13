@@ -72,6 +72,13 @@ contact sheets, fixed, re-labelled before training).
 - The tablet's scrub slider and PAUSE button haven't been tried on a real tablet (only headless).
 - The new page costs the same GPU time as the old one on this laptop (±4 ms), measured at idle only.
 
+## Overnight incident
+At 21:19 the iGPU hung (DXGI 887A0006, like the Oct 12 afternoon freeze) while agents were testing on the same GPU. live.py's
+recovery reopened the model, but in-process that silently fell back to the CPU: the table ran at ~2 fps until I noticed at
+23:55 and restarted it (back on DirectML, 5 fps idle). Fixed on night/base and night/integration: on a GPU fault live.py now
+exits and the restart loop starts a clean process. (So the GPU-cost comparison of the new vs old page was measured with the
+detector on the CPU; it still says new = old, but re-measure with the real table if it matters.) Recording continued throughout.
+
 ## Branches
 | Branch | What |
 |---|---|
