@@ -871,13 +871,11 @@ def main():
         try:
             r = model.predict(np.ascontiguousarray(frame[cy0:cy1, cx0:cx1]), imgsz=sz, conf=state['tune']['conf'],
                               agnostic_nms=True, verbose=False, **dev_kw)[0]   # one class per object
-        except Exception as e:             # Windows: a GPU fault/reset kills the DirectML session (DXGI 887A0006, Oct 12):
-            if not dml:                    # open a new one and carry on; if that fails too, main() exits and gets restarted
-                raise
-            print(f'{time.strftime("%H:%M:%S")} model failed ({str(e).strip().splitlines()[-1][-160:]}): reloading', flush=True)
-            time.sleep(2)
-            model = YOLO(a.weights, task='segment' if '-seg' in str(a.weights) else 'detect')
-            continue
+        except Exception as e:             # Windows: a GPU fault/reset kills the DirectML session (DXGI 887A0006, Oct 12).
+            if dml:                        # A new session in this process silently falls back to the CPU (2 fps for hours,
+                print(f'{time.strftime("%H:%M:%S")} model failed ({str(e).strip().splitlines()[-1][-160:]}): exiting '
+                      'for a fresh DirectML device', flush=True)   # Oct 12 21:20): exit; the restart loop starts a clean process
+            raise
         ms = 0.9 * ms + 0.1 * (time.time() - t0) * 1000
         state['model_ms'] = ms
         state['model_parts'] = {k: round(0.9 * (state.get('model_parts') or {}).get(k, v) + 0.1 * v, 1)   # ultralytics' own split
