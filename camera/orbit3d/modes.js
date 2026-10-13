@@ -1449,7 +1449,7 @@ export function createModes(ctx) {
   // The transfer is drawn from where the Seldon is to GEO / the DRO. Scale 'true' (setScale): Earth and the Moon at true relative
   // size at fixed spots, their pieces ignored; only the Seldons move.
   Object.assign(STYLES, { oBody: { c: C.fog200, w: 1.2, op: .9 } });
-  const GD = { geoBand: 40, droKm: V.DRO_KM, was: [false, false] };   // geoBand: mm of ring distance; droKm: size of the DRO drawn
+  const GD = { geoBand: 40, leoBand: 25, peerBand: 25, droKm: V.DRO_KM, was: [false, false], wasLeo: [false, false], peer: -1 };   // bands: mm of ring distance (LEO, GEO, the other Seldon's orbit)   // geoBand: mm of ring distance; droKm: size of the DRO drawn
   let scaleMode = 'show';
   const fixedEM = () => ({ earth: { x_mm: 150, y_mm: SH() / 2 }, moon: { x_mm: SW() - 190, y_mm: SH() / 2 } });   // room for GEO left of Earth, the DRO right of the Moon, and the "True scale" label at the end
   // geo / dro share the rails language with capture and competitor: mint = our path, white = the target, fog dashed = references
@@ -1486,9 +1486,19 @@ export function createModes(ctx) {
     const bodies = ids.map(id => {
       const p = P[id], k = kOf(id), raw = OGEO.bodyAt(maps, p.x_mm, p.y_mm);
       const b = geo ? OGEO.lockGeo(maps, raw, GD.was[k], GD.geoBand) : OGEO.lockDro(maps, p.x_mm, p.y_mm, raw, GD.was[k], GD.droKm);
-      GD.was[k] = !!b.locked; return b;
+      GD.was[k] = !!b.locked;
+      if (geo && !b.locked) { const l = OGEO.lockLeo(maps, b, GD.wasLeo[k], GD.leoBand); GD.wasLeo[k] = !!l.leo; return l; }
+      GD.wasLeo[k] = false; return b;
     });
-    for (const k of [0, 1]) if (!ids.some(id => kOf(id) === k)) GD.was[k] = false;
+    for (const k of [0, 1]) if (!ids.some(id => kOf(id) === k)) GD.was[k] = GD.wasLeo[k] = false;
+    // the other Seldon's orbit locks too (geo): one placed near it joins that orbit exactly (the one being moved joins the
+    // other; Seldon-2 joins Seldon-1 when neither moves), with the same hysteresis as GEO. Two on one orbit = a phasing story.
+    if (geo && bodies.length === 2 && bodies.every(x => x.prim === 'E')) {
+      const mv = ids.map(id => !!P[id].moving), j = mv[0] && !mv[1] ? 0 : mv[1] && !mv[0] ? 1 : GD.peer >= 0 ? GD.peer : 1;
+      const A = bodies[1 - j], J = bodies[j], band = GD.peerBand * (GD.peer === j ? 1.15 : 1);   // (a short release: two orbits 30 mm apart are two orbits)
+      if (!J.locked && !J.leo && Math.abs(J.rho - A.rho) < band) { bodies[j] = { ...J, r: A.r, rho: A.rho, n: A.n, peer: true }; GD.peer = j; }
+      else GD.peer = -1;
+    } else GD.peer = -1;
     // reference rings (fog, dashed)
     if (geo || TS) refRing(OR.geo, OR.geoL, maps, OGEO.R_GEO, 'GEO');
     if (geo && maps.E.rho(OGEO.R_GEO) - maps.E.rho(OGEO.R_LEO) >= LEO_GAP) refRing(OR.leo, OR.leoL, maps, OGEO.R_LEO, 'LEO');
@@ -1510,7 +1520,7 @@ export function createModes(ctx) {
     if (moonB) ride(2, moonB, OR.ring[2], OR.dot[2]); else OR.last[2] = null;
     bodies.forEach((x, k) => {
       ride(k, x, GX.ring[k], GX.dot[k]);
-      const T = TAU / x.n, p = P[ids[k]], col = k ? '#f6f8f8' : '#0ee3a6', where = x.locked ? (geo ? 'GEO' : 'DRO') + (geo ? '' : ' · ' + kmTxt(x.r - x.B.R)) : kmTxt(x.r - x.B.R);
+      const T = TAU / x.n, p = P[ids[k]], col = k ? '#f6f8f8' : '#0ee3a6', where = x.locked ? (geo ? 'GEO' : 'DRO') + (geo ? '' : ' · ' + kmTxt(x.r - x.B.R)) : x.leo ? 'LEO' : kmTxt(x.r - x.B.R) + (x.peer ? ' · SAME ORBIT' : '');
       tagBeside(GX.tag[k], `<span style="color:${col}">${ids[k].toUpperCase()}</span> &nbsp;${where} · ${fmtT(T)} period`, p.x_mm, p.y_mm, p.x_mm - x.B.cx || 1, p.y_mm - x.B.cy, OR.slot[k], 8.6);
     });
     for (let k = bodies.length; k < 2; k++) OR.last[k] = null;
@@ -1531,6 +1541,8 @@ export function createModes(ctx) {
   function setOptsOrbits(m, o = {}) {
     const num = (v, lo, hi) => Math.max(lo, Math.min(hi, +v));
     if (m === 'geo' && o.band_mm != null) GD.geoBand = num(o.band_mm, 10, 120);
+    if (m === 'geo' && o.peer_mm != null) GD.peerBand = num(o.peer_mm, 0, 80);
+    if (m === 'geo' && o.leo_mm != null) GD.leoBand = num(o.leo_mm, 0, 80);
     if (m === 'dro' && o.dro_km != null) GD.droKm = num(o.dro_km, 5000, 60000);
     OR.tr.xk = OR.trG.xk = null;
   }

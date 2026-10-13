@@ -693,6 +693,7 @@ function tick(now) {
   // messages it glides instead of stair-stepping; (4) frame-rate-independent exponential ease (1 - exp(-dt/tau)).
   const DEADZONE = 2.5, age = live ? Math.min(.12, Math.max(0, (now - feedAt) / 1000)) : 0;
   for (const [k, p] of Object.entries(pieces)) {
+    if (showFrozen() && k !== 'hand' && smooth[k]) continue;                           // frozen: drawn exactly where it was (no glide or ease creeping on)
     const vx = p.vx || 0, vy = p.vy || 0, sp = Math.hypot(vx, vy), f = Math.min(1, sp / 150);   // fully "moving" from 150 mm/s
     const a = 1 - Math.exp(-dt / Math.max(.001, tauStill + (tauMove - tauStill) * f));
     const S_ = smooth[k] || (smooth[k] = { x: p.x_mm, y: p.y_mm, hx: p.x_mm, hy: p.y_mm });

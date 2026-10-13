@@ -83,6 +83,13 @@ export function lockGeo(maps, b, was, band) {
   const rg = maps.E.rho(R_GEO);
   return Math.abs(b.rho - rg) < band * (was ? 1.4 : 1) ? { ...b, r: R_GEO, rho: rg, n: Math.sqrt(MU_E / R_GEO ** 3), locked: true } : b;
 }
+// LEO lock: a body within band mm outside the LEO ring (40% more once locked) is in LEO; flagged leo, not locked (it still has
+// somewhere to go: the transfer to GEO is drawn from there)
+export function lockLeo(maps, b, was, band) {
+  if (b.prim !== 'E') return b;
+  const rl = maps.E.rho(R_LEO);
+  return b.rho - rl < band * (was ? 1.4 : 1) ? { ...b, r: R_LEO, rho: rl, n: Math.sqrt(MU_E / R_LEO ** 3), leo: true } : b;
+}
 // DRO lock: a body generally near the Moon (inside its zone, which is not drawn; 12% more once locked) is in the DRO of size rDro km
 export function lockDro(maps, x, y, b, was, rDro) {
   const M = maps.M;

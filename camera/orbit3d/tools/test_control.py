@@ -35,7 +35,7 @@ def feed_message():
     pc = lambda x, y, **k: {'x_mm': x, 'y_mm': y, 'seen_ago': 0, 'moving': False, 'vx': 0, 'vy': 0, **k}
     return {'t': now, 'screen_mm': [1428.5, 803.5], 'calibrated': True, 'fps': 20, 'show': live.show_get(), 'pieces': {
         'earth': pc(230, 400), 'moon': pc(1200, 400),
-        'seldon-1': pc(x, y, moving=stub['move'], vx=vx), 'seldon-2': pc(230, 250)}}
+        'seldon-1': pc(x, y, moving=stub['move'], vx=vx), 'seldon-2': pc(230, 200)}}
 
 
 class H(SimpleHTTPRequestHandler):
