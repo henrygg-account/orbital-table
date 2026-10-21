@@ -20,6 +20,17 @@
   "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
 } }
 </script>
+<script>   // errors on the table: a small red readout in the corner (there are no devtools on the TV), last four lines
+{ const say = m => { let el = document.getElementById('pgerr'); if (!el) { el = document.createElement('div'); el.id = 'pgerr';
+    el.style.cssText = 'position:fixed;left:10px;bottom:10px;z-index:99;font:13px monospace;color:#e2604f;white-space:pre;pointer-events:none';
+    document.body.appendChild(el); } el.textContent = (el.textContent + '
+' + m).split('
+').filter(Boolean).slice(-4).join('
+'); };
+  addEventListener('error', e => say(`error: ${e.message} @${(e.filename || '').split('/').pop()}:${e.lineno}`));
+  addEventListener('unhandledrejection', e => say(`rejection: ${e.reason && e.reason.message || e.reason}`));
+  window.__say = say; }
+</script>
 </head>
 <body>
 <div id="feed"></div><div id="note" class="mt mt-foot"></div>
@@ -69,6 +80,7 @@ const PERF = { maxPx: +(Q.get('maxpx') ?? (WIN ? 2.1e6 : Infinity)), fps: +(Q.ge
   maxDpr: +(Q.get('maxdpr') ?? 2), msaa: +(Q.get('msaa') ?? 0) };   // ?msaa=4: multisampled composer targets (smooth line edges)
 const pixelRatio = (w, h) => Math.max(.5, Math.min(PERF.maxDpr, devicePixelRatio, Math.sqrt(PERF.maxPx / (w * h))));
 const renderer = new THREE.WebGLRenderer({ antialias: !WIN, powerPreference: 'high-performance' });
+renderer.domElement.addEventListener('webglcontextlost', () => window.__say?.('WebGL context lost (GPU reset?): reload the page'));
 renderer.setPixelRatio(pixelRatio(innerWidth, innerHeight));
 document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
