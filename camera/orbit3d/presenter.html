@@ -9,7 +9,8 @@
 <title>Orbital Table</title>
 <link rel="stylesheet" href="gg-table.css">
 <style>
-  /* The presenter's remote, for an iPhone held in one hand: the four modes, true scale and zoom. Served by live.py
+  /* The presenter's remote, for an iPhone held in one hand: the two modes, then one card (the path, the engine, reach and the
+     engines' Isp; Oct 26: "simplify the phone menu", true scale gone). Served by live.py
      (http://<laptop>:8780/presenter.html on the same Wi-Fi); everything posts to /show and the table follows. */
   :root { --mint: #0ee3a6; --line: rgba(246,248,248,.14); --dim: #8a969a; --ink: #0d1113; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -24,40 +25,78 @@
   .dot.on { background: var(--mint); }
   button { font: inherit; color: inherit; cursor: pointer; border: 1px solid var(--line); background: rgba(246,248,248,.04); }
   button:active { background: rgba(246,248,248,.14); }
-  .modes { flex: 1; display: grid; grid-template-rows: repeat(2, 1fr); gap: 10px; min-height: 0; }
-  .mode { border-radius: 18px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 6px; padding: 0 22px; text-align: left; }
-  .mode b { font-weight: 500; font-size: 26px; letter-spacing: -.01em; color: #f6f8f8; }
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .mode { height: 92px; border-radius: 18px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 6px; padding: 0 18px; text-align: left; }
+  .mode b { font-weight: 500; font-size: 21px; letter-spacing: -.01em; color: #f6f8f8; }
   .mode i { font-style: normal; font-family: var(--font-mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
   .mode.on { border-color: var(--mint); background: rgba(14,227,166,.10); }
   .mode.on b { color: var(--mint); }
   .row { display: grid; grid-template-columns: 1fr; gap: 10px; }
   .card { border: 1px solid var(--line); border-radius: 18px; padding: 14px 18px; background: var(--ink); }
-  .lbl { display: flex; justify-content: space-between; align-items: baseline; font-family: var(--font-mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); margin-bottom: 10px; }
-  .lbl .v { font-family: var(--font-display); font-size: 18px; letter-spacing: 0; text-transform: none; color: #f6f8f8; font-variant-numeric: tabular-nums; }
   .toggle { width: 100%; height: 58px; border-radius: 999px; font-family: var(--font-mono); font-size: 14px; letter-spacing: .14em; text-transform: uppercase; }
   .toggle.on { border-color: #f6f8f8; color: #0a0d0d; background: #f6f8f8; }
-  button:disabled, input:disabled { opacity: .3; }
-  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 44px; background: transparent; margin: 0; }
-  input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: rgba(246,248,248,.18); }
-  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 34px; height: 34px; border-radius: 50%; background: #f6f8f8; margin-top: -14px; border: 0; }
-  input[type=range]::-moz-range-track { height: 6px; border-radius: 3px; background: rgba(246,248,248,.18); }
-  input[type=range]::-moz-range-thumb { width: 34px; height: 34px; border-radius: 50%; background: #f6f8f8; border: 0; }
-  .ends { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+  button:disabled { opacity: .3; }
   .note { font-size: 13px; color: var(--dim); min-height: 1.2em; }
+  /* the transfer path: two segmented rows (Path, Engine) in one card; a picked segment is mint, as a picked mode. Engine is greyed
+     while the table prices the DRO: that trip is always chemical, then electric (modes.js gdRoute) */
+  .card.seg { padding: 10px 14px; display: grid; gap: 8px; }
+  .sl { display: grid; grid-template-columns: 52px 1fr 76px; align-items: center; gap: 8px; } .sl[hidden] { display: none; }   /* Isp per engine (the paths' fuel, the reach view), the tank (the reach view) */
+  .sl > span { font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); } .sl b { font-weight: 500; font-size: 15px; text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 40px; background: transparent; margin: 0; }
+  input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: rgba(246,248,248,.18); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 30px; height: 30px; border-radius: 50%; background: #f6f8f8; margin-top: -12px; border: 0; }
+  input[type=range]::-moz-range-track { height: 6px; border-radius: 3px; background: rgba(246,248,248,.18); } input[type=range]::-moz-range-thumb { width: 30px; height: 30px; border-radius: 50%; background: #f6f8f8; border: 0; }
+  .sr { display: grid; grid-template-columns: 52px 1fr; align-items: center; gap: 8px; }
+  .sr[hidden], .card[hidden] { display: none; }
+  .sr > span { font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+  .segs { display: flex; gap: 6px; }
+  .segs button { flex: 1 1 auto; height: 44px; padding: 0 8px; border-radius: 999px; font-family: var(--font-mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+  .segs button i { font-style: normal; font-size: 10px; color: var(--dim); margin-left: 6px; }
+  .segs button.on { border-color: var(--mint); color: var(--mint); background: rgba(14,227,166,.10); }
+  .segs button.on i { color: inherit; opacity: .75; }
   .recal { height: 50px; font-size: 12px; color: var(--dim); }
   .recal.arm { border-color: #f6f8f8; color: #f6f8f8; }
   .recal.busy { opacity: .5; }
+  /* a short screen (an iPhone SE in Safari, its bars showing: 375 x 553): everything a little tighter, empty notes take no room */
+  @media (max-height: 600px) {
+    body { gap: 8px; padding-top: calc(env(safe-area-inset-top) + 8px); padding-bottom: calc(env(safe-area-inset-bottom) + 10px); }
+    .row { gap: 8px; } .toggle { height: 46px; } .recal { height: 44px; } .card { padding: 10px 16px; } .card.seg { padding: 8px 12px; gap: 6px; }
+    .note:empty { display: none; }
+  }
+  /* a tablet (the presenter's iPad, 7th gen: 810 x 1080, either way up; owner, Oct 28: "make buttons a bit bigger"): the same
+     page, wider, every button and slider about 1.4x */
+  @media (min-width: 700px) and (min-height: 650px) {
+    body { max-width: 760px; gap: 20px; padding: calc(env(safe-area-inset-top) + 22px) calc(env(safe-area-inset-right) + 28px) calc(env(safe-area-inset-bottom) + 24px) calc(env(safe-area-inset-left) + 28px); }
+    .top { font-size: 15px; gap: 12px; } .top .sq { width: 10px; height: 10px; } .dot { width: 12px; height: 12px; }
+    .modes { gap: 16px; }
+    .mode { height: 132px; border-radius: 24px; gap: 8px; padding: 0 26px; }
+    .mode b { font-size: 30px; } .mode i { font-size: 14px; }
+    .row { gap: 16px; }
+    .card { border-radius: 24px; padding: 20px 26px; } .card.seg { padding: 18px 22px; gap: 14px; }
+    .sr { grid-template-columns: 84px 1fr; gap: 14px; } .sl { grid-template-columns: 84px 1fr 104px; gap: 14px; }
+    .sr > span, .sl > span { font-size: 13px; } .sl b { font-size: 21px; }
+    .segs { gap: 10px; }
+    .segs button { height: 64px; padding: 0 14px; font-size: 17px; } .segs button i { font-size: 13px; margin-left: 8px; }
+    input[type=range] { height: 60px; }
+    input[type=range]::-webkit-slider-runnable-track { height: 8px; border-radius: 4px; }
+    input[type=range]::-webkit-slider-thumb { width: 42px; height: 42px; margin-top: -17px; }
+    input[type=range]::-moz-range-track { height: 8px; } input[type=range]::-moz-range-thumb { width: 42px; height: 42px; }
+    .toggle { height: 80px; font-size: 18px; } .recal { height: 72px; font-size: 16px; }
+    .note { font-size: 17px; }
+  }
 </style>
 </head>
 <body>
 <div class="top"><span class="sq"></span>Orbital table<span class="conn"><span class="dot" id="dot"></span><span id="conn">Connecting</span></span></div>
 <div class="modes" id="modes"></div>
 <div class="row">
-  <button class="toggle" id="scale">True scale</button>
-  <div class="card">
-    <div class="lbl"><span>Zoom</span><span class="v" id="zv">1.0×</span></div>
-    <input type="range" id="zoom" min="50" max="200" value="100" step="1" aria-label="Zoom">
-    <div class="ends"><span>Wide</span><span>Close</span></div>
+  <div class="card seg" id="ctl">
+    <div class="sr" id="pathr"><span>Path</span><div class="segs" id="path"></div></div>
+    <div class="sr" id="engr"><span>Engine</span><div class="segs" id="engine"></div></div>
+    <div class="sr" id="reachr"><span>Reach</span><div class="segs" id="reach"></div></div>
+    <div class="sl" id="sl-gt" hidden><span>GT Isp</span><input type="range" id="isp-gt" min="150" max="425" step="5" aria-label="Chemical specific impulse"><b id="v-gt" style="color:#ff5a4f"></b></div>
+    <div class="sl" id="sl-et" hidden><span>ET Isp</span><input type="range" id="isp-et" min="300" max="1000" step="25" aria-label="Electric specific impulse"><b id="v-et" style="color:#b67dff"></b></div>
+    <div class="sl" id="sl-tank" hidden><span>Tank</span><input type="range" id="tank" min="10" max="600" step="5" aria-label="Propellant tank"><b id="v-tank"></b></div>
   </div>
   <div class="note" id="note"></div>
   <button class="toggle recal" id="recal">Recalibrate</button>
@@ -65,55 +104,82 @@
 </div>
 <script>
 const MODES = [['geo', 'LEO to GEO'], ['dro', 'LEO to DRO']];   // Capture / Defend and Competitor are set aside for now
-const TRUE_OK = ['geo', 'dro'], ZOOM_OK = ['geo'];   // what the table supports in each mode
+const ON = ['geo', 'dro'];   // the modes the card works in (no zoom or true scale since Oct 26)
+// the transfer path Seldon-1 takes on the table, and for which engine. Seldon-2 is LEO TO GEO's, the DRO LEO TO DRO's (live.py
+// switches the mode); each is offered while its piece is seen (a feed with no pieces at all, as show_server.py's: all offered)
+const PATHS = [['off', 'Off'], ['geo', 'GEO'], ['seldon-2', 'Seldon-2']], ENGINES = [['et', 'ET', 'electric'], ['gt', 'GT', 'chemical']];
+const NEEDS = { 'seldon-2': ['seldon-2', 'Seldon-2'] };   // (the DRO is LEO TO DRO's: that mode is the mission)
 const HOST = new URLSearchParams(location.search).get('host'), BASE = HOST ? `http://${HOST}` : '';   // ?host=ip:8780 if served elsewhere
 const $ = id => document.getElementById(id);
-let show = { mode: 'geo', scale: 'show', zoom: 1 }, lastMsg = 0, dragging = false;
+let show = { mode: 'geo', scale: 'show', path: 'off', engine: 'et', reach: 'off', isp: { et: 1000, gt: 320 }, tank: 325 }, seen = null, lastMsg = 0;   // seen: the feed's pieces
 
 const modesEl = $('modes');
 MODES.forEach(([m, t], i) => {
   const b = document.createElement('button'); b.className = 'mode'; b.dataset.m = m;
   b.innerHTML = `<i>${i + 1}</i><b>${t}</b>`; b.onclick = () => post({ mode: m }); modesEl.appendChild(b);
 });
+const segs = (id, opts, key) => opts.forEach(([v, t, sub]) => {
+  const b = document.createElement('button'); b.dataset.v = v; b.innerHTML = t + (sub ? `<i>${sub}</i>` : ''); b.onclick = () => post({ [key]: v }); $(id).appendChild(b);
+});
+segs('path', PATHS, 'path'); segs('engine', ENGINES, 'engine'); segs('reach', [['off', 'Off'], ['on', 'On']], 'reach');   // reach: the table shades what one tank gets Seldon-1 to, for the engine picked
+const isOn = r => r === 'et' || r === 'gt';
+for (const b of $('engine').children) b.onclick = () => post({ engine: b.dataset.v, ...(isOn(show.reach) ? { reach: b.dataset.v } : {}) });   // (reach on: its map follows the engine)
+for (const b of $('reach').children) b.onclick = () => post({ reach: b.dataset.v === 'on' ? show.engine || 'et' : 'off' });
+const absent = p => NEEDS[p] && seen && Object.keys(seen).length && !seen[NEEDS[p][0]];   // its piece is not on the table
 function render() {
   for (const b of modesEl.children) b.classList.toggle('on', b.dataset.m === show.mode);
-  const tOk = TRUE_OK.includes(show.mode), zOk = ZOOM_OK.includes(show.mode) && !(show.scale === 'true' && tOk);
-  const ts = $('scale'); ts.disabled = !tOk; ts.classList.toggle('on', show.scale === 'true' && tOk); ts.textContent = show.scale === 'true' && tOk ? 'True scale · on' : 'True scale';
-  const z = $('zoom'); z.disabled = !zOk; if (!dragging) z.value = Math.round((show.zoom || 1) * 100);
-  $('zv').textContent = `${(+z.value / 100).toFixed(1)}×`;
-  $('note').textContent = !tOk ? 'True scale: LEO to GEO and LEO to DRO only.' : show.scale === 'true' ? 'True scale: zoom is fixed.' : show.mode === 'dro' ? 'LEO to DRO: the Earth and Moon pieces set the scale.' : !MODES.some(m => m[0] === show.mode) ? 'The table is in another mode: pick one above.' : '';
+  const ok = ON.includes(show.mode), dro = show.mode === 'dro', rk = ok && !dro && isOn(show.reach) ? show.reach : null, eOk = ok && !dro;
+  $('ctl').hidden = dro;   // LEO TO DRO: nothing to pick, the mission (owner, Oct 26: "we put seldon 1 and it completes the mission from there"; Oct 27: "no reach in DRO mode on phone")
+  for (const b of $('reach').children) { b.disabled = !ok; b.classList.toggle('on', ok && (rk ? 'on' : 'off') === b.dataset.v); }
+  for (const b of $('path').children) { b.disabled = !ok || !!absent(b.dataset.v); b.classList.toggle('on', ok && (show.path || 'off') === b.dataset.v); }   // (a picked target that goes away stays picked: the table just doesn't draw it)
+  for (const b of $('engine').children) { b.disabled = !eOk; b.classList.toggle('on', eOk && (rk || show.engine || 'et') === b.dataset.v); }   // (the pick is kept for GEO / Seldon-2)
+  // Isp for each engine the table is pricing (reach: its engine; the DRO's trip: both; else the engine picked); its FUEL follows on the table
+  const use = !ok || dro ? [] : rk ? [rk] : [show.engine || 'et'];   // (LEO TO DRO: our figures, no sliders)
+  for (const k of ['gt', 'et']) { const i = $('isp-' + k); $('sl-' + k).hidden = !use.includes(k); if (!dragging) i.value = show.isp?.[k] ?? i.value; $('v-' + k).textContent = `${Number(i.value).toLocaleString('en-US')} s`; }
+  { const t = $('tank'); $('sl-tank').hidden = !rk || dro; if (!dragging) t.value = show.tank ?? 325; $('v-tank').textContent = `${t.value} kg`; }
+  $('note').textContent = ok && absent(show.path) ? `${NEEDS[show.path][1]} is not on the table.` : '';   // (LEO TO DRO: no note, no "Place ..." text; owner, Oct 27)
 }
 function post(patch) {   // optimistic: the phone answers at once; /events confirms
-  show = { ...show, ...patch }; render();
-  fetch(BASE + '/show', { method: 'POST', body: JSON.stringify(patch) }).then(r => r.json()).then(s => { if (!dragging) { show = s; render(); } })
+  const one = isOn(patch.reach) ? { path: 'off' } : patch.path && patch.path !== 'off' ? { reach: 'off' } : {};   // reach and a path are never on together (live.py; owner, Oct 27)
+  show = { ...show, ...patch, ...one, ...(patch.isp ? { isp: { ...show.isp, ...patch.isp } } : {}) }; render();   // (isp: one engine's at a time)
+  fetch(BASE + '/show', { method: 'POST', body: JSON.stringify(patch) }).then(r => r.json()).then(s => { show = s; render(); })
     .catch(() => { $('conn').textContent = 'Not reaching the table'; });
 }
-$('scale').onclick = () => post({ scale: show.scale === 'true' ? 'show' : 'true' });
-{ const z = $('zoom'); let last = 0, timer = 0;   // ~10 posts a second while dragging
-  const send = () => { clearTimeout(timer); timer = 0; last = Date.now(); post({ zoom: +z.value / 100 }); };
-  z.addEventListener('pointerdown', () => { dragging = true; }); z.addEventListener('touchstart', () => { dragging = true; }, { passive: true });
-  addEventListener('pointerup', () => { dragging = false; }); addEventListener('touchend', () => { dragging = false; });
-  z.oninput = () => { $('zv').textContent = `${(+z.value / 100).toFixed(1)}×`; if (Date.now() - last >= 100) send(); else if (!timer) timer = setTimeout(send, 100 - (Date.now() - last)); };
-  z.onchange = () => { dragging = false; send(); }; }
+// the sliders: ~10 posts a second while dragging (the table follows live), the last value on release (ranges: live.py ISP_RANGE, TANK_RANGE)
+let dragging = false;
+addEventListener('pointerup', () => { dragging = false; }); addEventListener('touchend', () => { dragging = false; });
+for (const [id, patch] of [['isp-et', v => ({ isp: { et: v } })], ['isp-gt', v => ({ isp: { gt: v } })], ['tank', v => ({ tank: v })]]) {
+  const el = $(id); let last = 0, timer = 0;
+  const send = () => { clearTimeout(timer); timer = 0; last = Date.now(); post(patch(+el.value)); };
+  el.addEventListener('pointerdown', () => { dragging = true; }); el.addEventListener('touchstart', () => { dragging = true; }, { passive: true });
+  el.oninput = () => { render(); if (Date.now() - last >= 100) send(); else if (!timer) timer = setTimeout(send, 100 - (Date.now() - last)); };
+  el.onchange = () => { dragging = false; send(); };
+}
 
-// Recalibrate from the white squares on the TV's corners (live.py /calibrate_squares): tap, then tap again within 3 s.
+// Recalibrate: tap, then tap again within 3 s. The TV shows its markers for ~3 s and live.py fits them (any move of the TV or
+// camera); the result is read back from /calib.json. (The corner squares, /calibrate_squares, remain for when the screen can't be seen.)
 { const b = $('recal'), n = $('rnote'); let armed = 0, busy = false;
   const reset = () => { armed = 0; b.className = 'toggle recal'; b.textContent = 'Recalibrate'; };
+  const last = async () => (await (await fetch(BASE + '/calib.json', { cache: 'no-store' })).json()).last;
+  const say = (txt, ok) => { n.textContent = txt; n.style.color = ok ? 'var(--mint)' : '#e2604f'; };
   b.onclick = async () => {
     if (busy) return;
-    if (!armed) { armed = setTimeout(reset, 3000); b.className = 'toggle recal arm'; b.textContent = 'Tap again: keep hands off the corners'; return; }
+    if (!armed) { armed = setTimeout(reset, 3000); b.className = 'toggle recal arm'; b.textContent = 'Tap again: clear the screen of pieces and hands'; return; }
     clearTimeout(armed); busy = true; b.className = 'toggle recal busy'; b.textContent = 'Recalibrating'; n.textContent = '';
     try {
-      const r = await (await fetch(BASE + '/calibrate_squares', { method: 'POST', body: '{}' })).json();
-      n.textContent = r.ok ? `Calibrated: the screen moved ${r.moved_px} px.` : `Not calibrated: ${r.error}.`;
-      n.style.color = r.ok ? 'var(--mint)' : '#e2604f';
-    } catch { n.textContent = 'Not calibrated: the table did not answer.'; n.style.color = '#e2604f'; }
+      const t0 = (await last())?.t || 0;
+      await fetch(BASE + '/show', { method: 'POST', body: JSON.stringify({ calib: true }) });
+      let r = null;
+      for (let k = 0; k < 40 && !r; k++) { await new Promise(res => setTimeout(res, 300)); const l = await last(); if (l && l.t > t0) r = l; }
+      if (!r) say('Not calibrated: the TV page did not answer (is it open?).', false);
+      else say(r.ok ? `Calibrated: ${r.markers_found} markers, ${r.rms_mm.toFixed(1)} mm.` : `Not calibrated: ${r.error}.`, r.ok);
+    } catch { say('Not calibrated: the table did not answer.', false); }
     busy = false; reset();
   };
 }
 function connect() {
   const es = new EventSource(BASE + '/events');
-  es.onmessage = e => { lastMsg = Date.now(); try { const f = JSON.parse(e.data); if (f.show && !dragging) { show = f.show; render(); } } catch {} };
+  es.onmessage = e => { lastMsg = Date.now(); try { const f = JSON.parse(e.data); seen = f.pieces || null; if (f.show) show = f.show; render(); } catch {} };
   es.onerror = () => {};
 }
 setInterval(() => { const on = Date.now() - lastMsg < 1500; $('dot').className = 'dot' + (on ? ' on' : ''); $('conn').textContent = on ? 'Live' : 'Not connected'; }, 500);

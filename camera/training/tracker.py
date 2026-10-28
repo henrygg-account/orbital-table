@@ -92,6 +92,10 @@ class Tracker:
                             # is keeps it seen but never moves it (Oct 13). Full size: learned from confident, hand-free views
     CARRY_HOLD_S = 0.2      # a carry (piece moving with a hand on it) ends this long after it last moved (~4 frames); outside a
                             # carry the hand gate applies whether or not the piece has locked yet (waving right after a placement, Oct 13)
+    SETTLE_MM = 6.0         # a carried piece whose detection stays within this...
+    SETTLE_S = 0.15         # ...this long (3 frames) has been put down: the carry ends and it locks there at once, hand on it or
+                            # not (Oct 25: a hand that went straight from putting it down to waving over it kept the carry alive,
+                            # the hand's own jitter on the box counting as movement, and the piece followed the wave)
 
     def __init__(self, cfg):
         self.cfg = cfg
@@ -274,6 +278,13 @@ class Tracker:
                 if d['conf'] >= self.CONF_NEW:
                     p['strong_t'] = now
                 return
+        st = p.get('settle')                                     # put down: where the detection has stayed, and since when
+        if st is None or np.hypot(zx - st[0], zy - st[1]) > self.SETTLE_MM:
+            st = p['settle'] = (zx, zy, now)
+        if now - p.get('carry_t', -1e9) < self.CARRY_HOLD_S and now - st[2] >= self.SETTLE_S - 1e-3:   # (frame times are not exact)
+            p['carry_t'] = -1e9                                  # the carry is over: locked where it was put down
+            p.update(x_mm=zx, y_mm=zy, sx=zx, sy=zy, rest=(zx, zy, now - self.STILL_S - 1e-3), vx=0.0, vy=0.0)
+            p.pop('exc', None)
         p['vx'] = 0.6 * p['vx'] + 0.4 * (zx - p['ex']) / dt
         p['vy'] = 0.6 * p['vy'] + 0.4 * (zy - p['ey']) / dt
         rest = p['rest']

@@ -23,10 +23,7 @@
 <script>   // errors on the table: a small red readout in the corner (there are no devtools on the TV), last four lines
 { const say = m => { let el = document.getElementById('pgerr'); if (!el) { el = document.createElement('div'); el.id = 'pgerr';
     el.style.cssText = 'position:fixed;left:10px;bottom:10px;z-index:99;font:13px monospace;color:#e2604f;white-space:pre;pointer-events:none';
-    document.body.appendChild(el); } el.textContent = (el.textContent + '
-' + m).split('
-').filter(Boolean).slice(-4).join('
-'); };
+    document.body.appendChild(el); } el.textContent = (el.textContent + '\n' + m).split('\n').filter(Boolean).slice(-4).join('\n'); };
   addEventListener('error', e => say(`error: ${e.message} @${(e.filename || '').split('/').pop()}:${e.lineno}`));
   addEventListener('unhandledrejection', e => say(`rejection: ${e.reason && e.reason.message || e.reason}`));
   window.__say = say; }
@@ -74,10 +71,12 @@ const MARG = 24, END = Q.get('end') === 'left' ? 'left' : 'right';
 // Windows (the ThinkPad's Radeon iGPU also runs live.py's detector): its 4K TV at 300% scaling made this draw 2560x1440
 // as fast as the browser would, starving the model. There: at most ?maxpx= pixels (default ~1080p; the TV upscales),
 // at most ?fps= frames a second (default 30: the TV runs at 29 Hz over HDMI), and no canvas MSAA (the composer draws
-// into its own targets, so it only cost bandwidth). The Mac keeps 2x, every frame, MSAA.
+// into its own targets, so canvas MSAA only cost bandwidth; the Mac still asks for it, to no effect). The smoothing is in
+// the composer's target: ?msaa= samples, default 4 (Oct 25: without it every line stair-stepped and its width wobbled;
+// on the ThinkPad's 680M at the TV's 2.1 Mpx a frame took ~5 ms, 2x ~7.4, 4x ~8-9; the ring's wobble 15% -> 12% / 9%). ?msaa=0: off.
 const WIN = /Windows/.test(navigator.userAgent);
 const PERF = { maxPx: +(Q.get('maxpx') ?? (WIN ? 2.1e6 : Infinity)), fps: +(Q.get('fps') ?? (WIN ? 30 : 0)),
-  maxDpr: +(Q.get('maxdpr') ?? 2), msaa: +(Q.get('msaa') ?? 0) };   // ?msaa=4: multisampled composer targets (smooth line edges)
+  maxDpr: +(Q.get('maxdpr') ?? 2), msaa: +(Q.get('msaa') ?? 4) };   // msaa: samples in the composer's targets (smooth line edges)
 const pixelRatio = (w, h) => Math.max(.5, Math.min(PERF.maxDpr, devicePixelRatio, Math.sqrt(PERF.maxPx / (w * h))));
 const renderer = new THREE.WebGLRenderer({ antialias: !WIN, powerPreference: 'high-performance' });
 renderer.domElement.addEventListener('webglcontextlost', () => window.__say?.('WebGL context lost (GPU reset?): reload the page'));
@@ -86,8 +85,9 @@ document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = null;                                   // the sky scene is drawn first, the table scene over it
 const camera = new THREE.OrthographicCamera(0, 1, 0, -1, -200, 200);
-const composer = PERF.msaa ? new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: PERF.msaa }))
-  : new EffectComposer(renderer);
+// (with a stencil buffer: each line marks the pixels it has drawn, so a translucent polyline blends once where its
+// segments overlap; it used to leave a bright bead at every vertex. See line().)
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: PERF.msaa, stencilBuffer: true }));
 
 // ---------- sky: the whole sky around a virtual camera ----------
 // NASA's Gaia-based star map, drawn by a full-screen shader from a zoom pyramid of tiles. The camera turns with the
@@ -264,7 +264,22 @@ function skyTiles(z) {
 // direction change), 'off' (no sky). Switching never jumps: the drift angle only integrates forward, and off fades out.
 const SKY_MODES = ['still', 'slow', 'off'];
 SKY.drift = 0; SKY.fade = 1;
+// Static backgrounds (Oct 25, less busy): one 4K picture instead of the sky above, from tools/make_backgrounds.py.
+// ?bg=deep|band|ink|studio|black; B cycles them, ending on the moving sky ('sky'). Sky 'off' still turns it off.
+const BGS = ['deep', 'band', 'ink', 'studio', 'black', 'sky'];
+const BG = { name: Q.get('bg') === 'sky' ? null : BGS.includes(Q.get('bg')) ? Q.get('bg') : 'band', tex: {} };   // default: band (chosen Oct 25)
+const bgEl = document.body.appendChild(Object.assign(document.createElement('div'), { className: 'mt mt-eyebrow' }));
+bgEl.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);opacity:0;transition:opacity .6s;pointer-events:none';
+function setBg(name, say) {
+  BG.name = name === 'sky' ? null : name;
+  if (BG.name && !BG.tex[BG.name]) BG.tex[BG.name] = new THREE.TextureLoader().load(`assets/bg/${BG.name}.jpg`, t => { t.colorSpace = THREE.SRGBColorSpace; });
+  if (say) toast(`BACKGROUND · ${name}`);
+}
+function toast(txt) { bgEl.textContent = txt; bgEl.style.opacity = 1; clearTimeout(bgEl._t); bgEl._t = setTimeout(() => { bgEl.style.opacity = 0; }, 1800); }   // try-out keys: what is on now
+if (BG.name) setBg(BG.name);
 function updateSky(E, M, dt, now) {
+  if (BG.name) { skyDome.visible = false; skyScene.background = window.SHOW_SKY === 'off' ? null : BG.tex[BG.name]; return; }
+  skyScene.background = null;
   const qs = Q.get('sky'), want = window.SHOW_SKY ?? (SKY_MODES.includes(qs) ? qs : 'still');
   const mode = SKY_MODES.includes(want) ? want : 'still';
   SKY.fade += ((mode === 'off' ? 0 : 1) - SKY.fade) * (1 - Math.exp(-dt / .4));
@@ -321,6 +336,14 @@ function skyExposure(su, z, dt) {
 }
 composer.addPass(new RenderPass(skyScene, skyCam));
 const mainPass = new RenderPass(scene, camera); mainPass.clear = false; mainPass.clearDepth = true;
+let lineRef = 0;                                           // stencil value of the line being drawn (1..255, a new one per line)
+// depth and stencil, cleared with the composer's target bound (RenderPass's clearDepth runs before it binds it, and a
+// multisampled target does not keep them between passes: noDepthResolve)
+scene.onBeforeRender = r => { r.clear(false, true, true); lineRef = 0; };
+// three r160 resolves a multisampled target's depth and stencil along with its colour, and the stencil resolve is slow on
+// D3D (Oct 25: a 4x frame went from 8 to 29 ms on the 680M). Nothing reads them after a pass, so only the colour is resolved
+// (r163 has this as resolveDepthBuffer / resolveStencilBuffer). Set every frame: a resize disposes the targets' state.
+const noDepthResolve = () => { for (const t of [composer.renderTarget1, composer.renderTarget2]) renderer.properties.get(t).__ignoreDepthValues = true; };
 composer.addPass(mainPass);
 const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), .45, .4, .7);   // not added: no glows
 composer.addPass(new OutputPass());
@@ -329,9 +352,11 @@ composer.addPass(new OutputPass());
 const lineMats = [];
 function line(points, color, width, opts = {}) {
   const g = new LineGeometry(); g.setPositions(points.flatMap(p => [p.x, p.y, 0]));
-  const m = new LineMaterial({ color, linewidth: width, transparent: true, opacity: opts.opacity ?? 1, dashed: !!opts.dash, dashSize: opts.dash || 1, gapSize: opts.gap || 1, depthWrite: false });
+  const m = new LineMaterial({ color, linewidth: width, transparent: true, opacity: opts.opacity ?? 1, dashed: !!opts.dash, dashSize: opts.dash || 1, gapSize: opts.gap || 1, depthWrite: false,
+    stencilWrite: true, stencilFunc: THREE.NotEqualStencilFunc, stencilZPass: THREE.ReplaceStencilOp });   // a pixel this line has drawn is not drawn by it again
   lineMats.push(m);
-  const l = new Line2(g, m); l.computeLineDistances(); scene.add(l);
+  const l = new Line2(g, m), ob = l.onBeforeRender; l.computeLineDistances(); scene.add(l);
+  l.onBeforeRender = function (...a) { m.stencilRef = lineRef = lineRef % 255 + 1; return ob.apply(this, a); };   // its own value each frame: other lines still blend over it
   return l;
 }
 function setLine(l, points) { l.geometry.setPositions(points.flatMap(p => [p.x, p.y, 0])); l.computeLineDistances(); }
@@ -575,7 +600,8 @@ modes = createModes({
   initialMode: Q.get('mode') || undefined, missionUrl: Q.get('mission') || undefined,
   engageUrl: Q.get('engage') || undefined, engageScenario: Q.get('scenario') || undefined, engageScale: Q.get('kmpermm') ? +Q.get('kmpermm') : undefined, engageStart: Q.get('engt') || undefined,
 });
-if (Q.has('testhook')) window.__t = () => ({ modes, pieces, smooth, SHOW });   // test hook (camera/orbit3d/tools/test_control.py reads what is drawn)
+if (Q.has('testhook')) window.__t = () => ({ modes, pieces, smooth, SHOW, frames: frameN });   // test hook (camera/orbit3d/tools/test_control.py reads what is drawn)
+if (Q.get('type')) modes.setType(Q.get('type'));         // type preset (modes.js TYPES); key Y cycles
 if (Q.get('scale') === 'true') modes.setScale('true');   // test hook: true scale from the start (the presenter's button does it live)
 { const b = modes.boxRect(Q.get('chip') != null ? +Q.get('chip') : 0); pieces.chip = { x_mm: b.cx, y_mm: b.cy, seen_ago: 0 }; }
 // engagement mode: Earth sits at the table centre and the Moon is set aside (demo stand-ins; on the real table, move the pieces).
@@ -632,7 +658,7 @@ addEventListener('keydown', e => {
 // ================================================================ PRESENTER (show state) ================================================================
 // The tablet (presenter.html) and the keys below post to live.py's /show; it comes back as feed.show (contract: NIGHT-AGENTS.md). Without live.py
 // the keys and ?show=mode:dro,scale:true,freeze:1,sky:off apply here. Modes expose optional hooks: setMode, setScale, setOpts(mode, opts), reset.
-const SHOW = { mode: null, scale: 'show', freeze: false, sky: 'still', reset: null, mode_opts: {}, play: true, t: null, zoom: 1 };   // play false: dots stop, films hold; t: scrub position (modes.seek, once per change)
+const SHOW = { mode: null, scale: 'show', freeze: false, sky: 'still', reset: null, mode_opts: {}, play: true, t: null, zoom: 1, path: 'off', engine: 'et', reach: 'off', isp: null, tank: null };   // play false: dots stop, films hold; t: scrub position (modes.seek, once per change)
 window.SHOW_SKY = 'still';                                  // the sky code reads this: 'still' | 'slow' | 'off'
 const showFrozen = () => SHOW.freeze;                       // frozen: feed piece updates are ignored (the tick below checks this)
 const frozenEl = document.body.appendChild(Object.assign(document.createElement('div'), { className: 'mt mt-eyebrow', textContent: 'FROZEN' }));
@@ -643,9 +669,15 @@ function applyShow(s) {
   const prev = JSON.stringify(SHOW);
   if (s.mode && s.mode !== SHOW.mode) { SHOW.mode = s.mode; optsSent = null; modes.setMode?.(s.mode); engagePieces(); }   // demo: the new mode's stand-ins
   if (s.scale && s.scale !== SHOW.scale) { SHOW.scale = s.scale; modes.setScale?.(s.scale); engagePieces(); }
-  if (typeof s.zoom === 'number' && s.zoom !== SHOW.zoom) { SHOW.zoom = s.zoom; modes.setZoom?.(s.zoom); engagePieces(); }   // the presenter's zoom slider
+  const pth = typeof s.path === 'string' ? s.path : typeof s.transfer === 'boolean' ? (s.transfer ? (SHOW.mode === 'dro' ? 'dro' : 'geo') : 'off') : null;   // the phone's Path (transfer: the old on / off)
+  if (pth && pth !== SHOW.path) { SHOW.path = pth; modes.setPath?.(pth); }
+  if (typeof s.engine === 'string' && s.engine !== SHOW.engine) { SHOW.engine = s.engine; modes.setEngine?.(s.engine); }   // ... and Engine (ET / GT)
+  if ((s.isp && JSON.stringify(s.isp) !== JSON.stringify(SHOW.isp)) || (typeof s.tank === 'number' && s.tank !== SHOW.tank)) { if (s.isp) SHOW.isp = s.isp; if (typeof s.tank === 'number') SHOW.tank = s.tank; modes.setVehicle?.({ isp: SHOW.isp, tank: SHOW.tank }); }   // ... and its Isp / tank sliders
+  { const rk = s.reach === true ? 'et' : s.reach === false ? 'off' : s.reach; if (['off', 'et', 'gt'].includes(rk) && rk !== SHOW.reach) { SHOW.reach = rk; modes.setReach?.(rk); } }   // ... and Reach (what one tank gets to, for ET or GT)
+  if (typeof s.zoom === 'number' && s.zoom !== SHOW.zoom) { SHOW.zoom = s.zoom; modes.setZoom?.(s.zoom); engagePieces(); }   // show.zoom: CAPTURE / COMPETITOR's scale (LEO TO GEO has one scale; the phone has no zoom since Oct 26)
   if (s.mode_opts) { SHOW.mode_opts = s.mode_opts; const o = s.mode_opts[SHOW.mode], j = JSON.stringify(o); if (o && j !== optsSent) { optsSent = j; modes.setOpts?.(SHOW.mode, o); } }
   if (s.reset != null) { if (SHOW.reset != null && s.reset !== SHOW.reset) modes.reset?.(); SHOW.reset = s.reset; }   // the first value seen is not a press
+  if (s.calib != null) { if (SHOW.calib != null && s.calib !== SHOW.calib) calibrate(); SHOW.calib = s.calib; }   // the phone's Recalibrate (the first value seen is not a press)
   if (s.freeze != null) SHOW.freeze = !!s.freeze;
   if (s.play != null && !!s.play !== SHOW.play) { SHOW.play = !!s.play; modes.setPlay?.(SHOW.play); }
   if (s.t !== undefined && s.t !== SHOW.t) { SHOW.t = s.t; if (s.t != null) modes.seek?.(s.t); }
@@ -660,24 +692,34 @@ function postShow(patch) {                                  // live.py is the so
   if (online()) fetch('/show', { method: 'POST', body: JSON.stringify(patch) }).then(r => r.json()).then(applyShow).catch(() => applyShow(patch));
   else applyShow(patch);
 }
-if (Q.get('show')) { const o = {}; for (const kv of Q.get('show').split(',')) { const [k, v] = kv.split(':'); o[k] = k === 'freeze' || k === 'play' ? v === '1' : k === 't' || k === 'zoom' ? +v : v; } applyShow(o); }   // test hook
+if (Q.get('show')) { const o = {}; for (const kv of Q.get('show').split(',')) { const [k, v] = kv.split(':'); o[k] = k === 'freeze' || k === 'play' || k === 'transfer' ? v === '1' : k === 't' || k === 'zoom' ? +v : v; } applyShow(o); }   // test hook
 addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toLowerCase(), M = ['geo', 'dro'];   // CAPTURE / DEFEND and COMPETITOR are set aside for now (still ?mode=)
   if (k >= '1' && k <= String(M.length)) postShow({ mode: M[+k - 1] });
   else if (k === 't' && !e.shiftKey) postShow({ scale: SHOW.scale === 'true' ? 'show' : 'true' });
   else if (k === 'f' && !e.shiftKey) postShow({ freeze: !SHOW.freeze });
+  else if (k === 'p' && modes.mode !== 'dro') { const ts = ['off', ...(modes.paths[modes.mode] || [])]; postShow({ path: ts[(ts.indexOf(SHOW.path) + 1) % ts.length] }); }   // the transfer path: off, then each target the mode draws
+  else if (k === 'g') postShow({ engine: SHOW.engine === 'gt' ? 'et' : 'gt' });   // ... for ET / GT
+  else if (k === 'v') postShow({ reach: { off: 'et', et: 'gt', gt: 'off' }[SHOW.reach] || 'et' });   // the reach view (delta-v): off, electric, chemical
   else if (k === 'r') postShow({ reset: true });
   else if (e.key === ' ') { e.preventDefault(); postShow(SHOW.play ? { play: false } : { play: true, t: null }); }   // Space: pause / play
   else if (k === 's' && !e.shiftKey) postShow({ sky: { still: 'slow', slow: 'off', off: 'still' }[SHOW.sky] });
+  else if (k === 'y') { const ks = Object.keys(modes.types), n = ks[(ks.indexOf(modes.type) + 1) % ks.length]; modes.setType(n); toast(`TYPE ${ks.indexOf(n) + 1}/${ks.length} · ${modes.types[n]}`); }   // type presets (try-out)
+  else if (k === 'b') setBg(BGS[(BGS.indexOf(BG.name ?? 'sky') + 1) % BGS.length], true);   // static backgrounds (try-out: this screen only)
 });
 // ================================================================ /PRESENTER ================================================================
 
 // ---------- frame ----------
 let last = performance.now(), lastDraw = -1e9;
+// one bad frame must not stop the table: an error used to end the frame loop, and the TV kept showing its last frame
+// (Oct 25). Now it is reported (thrown again outside the loop: the corner readout and the tests see it) and the loop goes on.
+let tickErrSeen = '', frameN = 0;   // frameN: frames finished (the tests check the loop is alive)
+const tickErr = e => { const m = String(e && e.stack || e); if (m !== tickErrSeen) { tickErrSeen = m; setTimeout(() => { throw e; }); } };
 function tick(now) {
   if (PERF.fps && now - lastDraw < 1000 / PERF.fps - 4) { requestAnimationFrame(tick); return; }   // Windows: 30 fps cap
   lastDraw = now;
+  try {
   const dt = Math.min(.05, Math.max(0, (now - last) / 1000)); last = now;
   const live = online();
   if (live && feed) {
@@ -704,7 +746,7 @@ function tick(now) {
   // real move leaves the zone and the target snaps to it, then the ease below follows promptly); (3) while moving, the
   // target is dead-reckoned along the feed velocity by the time since the message (+ the camera lead), so between 18 Hz
   // messages it glides instead of stair-stepping; (4) frame-rate-independent exponential ease (1 - exp(-dt/tau)).
-  const DEADZONE = 2.5, age = live ? Math.min(.12, Math.max(0, (now - feedAt) / 1000)) : 0;
+  const DEADZONE = 2.5, SNAP = .5, age = live ? Math.min(.12, Math.max(0, (now - feedAt) / 1000)) : 0;
   for (const [k, p] of Object.entries(pieces)) {
     if (showFrozen() && k !== 'hand' && smooth[k]) continue;                           // frozen: drawn exactly where it was (no glide or ease creeping on)
     const vx = p.vx || 0, vy = p.vy || 0, sp = Math.hypot(vx, vy), f = Math.min(1, sp / 150);   // fully "moving" from 150 mm/s
@@ -714,6 +756,9 @@ function tick(now) {
     if (Math.hypot(p.x_mm - S_.hx, p.y_mm - S_.hy) > DEADZONE || k === 'hand' || k === 'chip' || !live) { S_.hx = p.x_mm; S_.hy = p.y_mm; }   // demo drag, the hand and the chip are not dead-zoned
     const ahead = sp > 40 ? lead + age : 0;                                            // only genuinely moving pieces are extrapolated
     S_.x += (S_.hx + vx * ahead - S_.x) * a; S_.y += (S_.hy + vy * ahead - S_.y) * a;
+    // (5) a still piece within SNAP mm of its held target is put on it: the ease's tail never arrives, and in LEO TO GEO (88 km a mm) the
+    // altitude kept ticking for seconds after the tracker had locked the piece (owner, Oct 27: "altitude still moves slightly after lockin")
+    if (!ahead && Math.hypot(S_.hx - S_.x, S_.hy - S_.y) < SNAP) { S_.x = S_.hx; S_.y = S_.hy; }
   }
   for (const k of Object.keys(smooth)) if (!pieces[k]) delete smooth[k];
   const held = k => pieces[k] && pieces[k].seen_ago > .6;
@@ -756,7 +801,8 @@ function tick(now) {
   }
   models.earth.userData.spin.rotation.y += dt * .08; models.earth.userData.clouds.rotation.y += dt * .1;
 
-  composer.render();
+  noDepthResolve(); composer.render(); frameN++;
+  } catch (e) { tickErr(e); }
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);

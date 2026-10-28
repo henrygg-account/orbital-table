@@ -22,12 +22,30 @@ const C = { mint: 0x0ee3a6, mint300: 0x6ff5cf, mint900: 0x063f30, white: 0xf6f8f
 const BG = C.black;
 const MARG = 24;                                          // safe margin, mm
 const BOX = 64, GAP = 10;                                 // chip boxes
-const RAIL_H = 56;                                        // edge rail height, mm
+let RAIL_H = 56;                                          // edge rail height, mm (set by the type preset)
+// Type presets (Oct 25, a try-out: ?type=<name>, key Y cycles): sizes, faces and where the numbers sit. 'current' = as before.
+//   css: classes on <html> (gg-table.css) · railH: rail height, mm · rails: 'both' (mirrored on both long edges), 'near' (one
+//   rail, on the presenter's audience edge), 'title' (the rails keep only the mode name; the numbers go next to the moving
+//   Seldon) · sans: piece labels in General Sans, mixed case · short: piece labels drop the period
+// Round 4 (same day): Michroma, chosen from the round-3 faces, and variants on it: big, no mono, rails on both edges. fx-*: gg-table.css.
+const BIG = { railH: 76, rails: 'both', sans: true, short: true };
+const TYPES = {
+  current: { label: 'Current', css: '', railH: 56, rails: 'both' },
+  michroma: { ...BIG, label: 'Michroma', css: 'ty-xl ty-sans fx-michroma' },
+  mgs: { ...BIG, label: 'Michroma numbers, General Sans words', css: 'ty-xl ty-sans fx-mgs' },
+  mair: { ...BIG, label: 'Michroma, airy (tracked caps, quiet units)', css: 'ty-xl ty-sans fx-mair' },
+  lexend: { ...BIG, label: 'Lexend Zetta (wide, lighter)', css: 'ty-xl ty-sans fx-lexend' },
+  krona: { ...BIG, label: 'Krona One (wide, heavier)', css: 'ty-xl ty-sans fx-krona' },
+  syncopate: { ...BIG, label: 'Syncopate (wide, small caps)', css: 'ty-xl ty-sans fx-syncopate' },
+  orbitron: { ...BIG, label: 'Orbitron (wide, squared)', css: 'ty-xl ty-sans fx-orbitron' },
+};
 const TAU = Math.PI * 2;
 
 const fmtHM = sec => { const m = Math.round(sec / 60); return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} m`; };
 const num = (v, d = 2) => v.toFixed(d);
-const U = s => `<i>${s}</i>`;                             // small lower-case unit after a number
+const U = s => `<i>${s}</i>`;
+const mps = kms => Math.round(kms * 1000).toLocaleString('en-US');   // a delta-v or speed (km/s) as whole m/s, '3,823': every one on the table reads in m/s (owner, Oct 26: km/s is harder to follow)
+const DV = '<span class="dl">Δ</span>v';               // delta-v, the Greek letter (gg-table.css .dl: the wide faces have no Greek)                             // small lower-case unit after a number
 
 // ---- orbital helpers ----
 function hohmann(r1, r2) {
@@ -64,7 +82,7 @@ function invWarp(rho, b, push) {
 }
 
 const OGEO = await import('./orbits-geo.js?v=' + Date.now());   // orbits view geometry + maths (cache-bust like demo.html's import)
-import * as V from './vehicle.js';                                // the one set of vehicle numbers (Isp, thrust, dry mass)
+const V = await import('./vehicle.js' + new URL(import.meta.url).search);   // the one set of vehicle numbers (Isp, thrust, dry mass); cache-busted as this file was (Oct 26: a stale cached vehicle.js, "pulseTime is not a function")
 const CGEO = await import('./capture-geo.js?v=' + Date.now());  // CAPTURE / DEFEND + COMPETITOR plans (Kepler maths, tools/test_capture_geo.html)
 
 // ---- COMPETITOR: the vehicle and tug numbers (Isp, thrust, dry mass) live in vehicle.js, one set for every mode. Edit them there.
@@ -103,7 +121,7 @@ export function createModes(ctx) {
     primary: { c: C.mint, w: 2.7, op: 1, grad: true },
     under: { c: C.mint900, w: 4.7, op: .5 },
     hi: { c: C.mint300, w: 3.5, op: 1 },
-    target: { c: C.white, w: 1.6, op: .7 },
+    target: { c: C.white, w: 1.6, op: .75 },                 // .7 until Oct 25, when its vertices blended twice (beads); .75 keeps that brightness
     ref: { c: C.fog300, w: 1.1, op: .4, dash: 4, gap: 4 },
     orbitA: { c: C.mint, w: 2.4, op: .9 },                   // Seldon-1's orbit (mint)
     orbitB: { c: 0xe2604f, w: 2.4, op: .9 },                 // Seldon-2's orbit (red)
@@ -121,12 +139,18 @@ export function createModes(ctx) {
     fillB: { c: 0xe2604f, w: 3.0, op: .85 },                // adversary slider / gauge fill
   };
   const kw = () => Math.max(.8, SC() / 1.344);              // line widths are authored for 1.34 px/mm (the 65" TV)
+  // Layers: lines are transparent, write no depth and are drawn back to front by z, so z alone sets what lies over what:
+  // orbits, rings and references 0; trajectories (a STYLES entry with path: true: transfer paths, their arrowheads and coasts)
+  // Z_PATH, over every orbit line whenever they were made (owner, Oct 26: trajectories always over passive orbits); riding dots 1
+  // (mkDot); the page's 3D stand-ins 2. (Routes' under-strokes -.5 and flow dashes .2 are the older modes' own.)
+  const Z_PATH = .1;
   function mkLine(g, kind) {
     const st = STYLES[kind];
     const l = line([W(0, 0), W(1, 1)], st.c, st.w * kw(), { opacity: 1, dash: st.dash, gap: st.gap });
     l.material.resolution.set(...mkres()); l.visible = false;
     if (kind === 'under') l.position.z = -.5;
     if (kind === 'flow') l.position.z = .2;
+    if (st.path) l.position.z = Z_PATH;
     if (st.grad) { l.material.vertexColors = true; l.material.color.set(0xffffff); l.material.needsUpdate = true; }
     const it = add(g, 'line', l, st.op); it.st = st; it.cc = new THREE.Color(st.c); return it;
   }
@@ -140,8 +164,12 @@ export function createModes(ctx) {
   };
   // fr: optional array of 0..1 progress per point; opacity runs 40% -> 100% (or custom a0..a1)
   function setPts(it, pts, fr, a0 = .4, a1 = 1) {
+    const pos = pts.flatMap(p => [p.x, p.y, 0]), same = (u, v) => u === v || (!!u && !!v && u.length === v.length && u.every((x, i) => x === v[i]));
+    it.pts = pts; it.on = true;
+    if (same(it.pos, pos) && (!it.st.grad || (it.a0 === a0 && it.a1 === a1 && same(it.fr, fr)))) return;   // the same points (most rings, most frames): no new geometry (Oct 25)
+    Object.assign(it, { pos, fr, a0, a1 });
     const l = it.obj, old = l.geometry, g = new old.constructor();
-    g.setPositions(pts.flatMap(p => [p.x, p.y, 0]));
+    g.setPositions(pos);
     if (it.st.grad) {
       const n = pts.length, cols = [], cc = it.cc;
       for (let i = 0; i < n; i++) {
@@ -150,7 +178,7 @@ export function createModes(ctx) {
       }
       g.setColors(cols);
     }
-    l.geometry = g; old.dispose(); l.computeLineDistances(); it.pts = pts; it.on = true;
+    l.geometry = g; old.dispose(); l.computeLineDistances();
   }
   // a route is an under-stroke (mint-900, 50%) beneath the primary line
   const flows = [];                                         // ambient dash drift lines (animated in update)
@@ -200,12 +228,19 @@ export function createModes(ctx) {
     const el = document.createElement('div'); el.className = 'rail'; el.style.display = 'none'; document.body.appendChild(el);
     const it = add('chrome', 'label', el, 1); it.on = true; return it;
   });
-  let railOwner = null;
+  let railOwner = null, TY = TYPES.current, tyName = 'current';
+  function setType(name) {
+    if (!TYPES[name] || name === tyName) return tyName;
+    const cl = document.documentElement.classList, cs = t => t.css.split(' ').filter(Boolean);
+    cl.remove(...cs(TY)); tyName = name; TY = TYPES[name]; RAIL_H = TY.railH; cl.add(...cs(TY));
+    onLayout(); return tyName;
+  }
   function setRails(mode, o) {
     if (mode !== railOwner) return;
     if (o.raw != null) { rails.forEach(r => setText(r, o.raw)); return; }
-    const { eyebrow, hero = '—', unit = '', mets = [], msg = '' } = o;
-    const html = `<div class="r-left"><div class="eyebrow"><span class="sq"></span>${eyebrow}</div><div class="hero">${hero}<i>${unit}</i></div></div>` +
+    const { eyebrow, hero = 'msg' in o ? '' : '—', unit = '', mets = [], msg = '' } = o;   // (a message, even an empty one: no hero)
+    const eb = '';   // never a title on the rails, in any mode (owner, Oct 27: "that text and font specifically should never be there"; `eyebrow` is ignored)
+    const html = TY.rails === 'title' ? `<div class="r-left">${eb}</div><div class="r-mid"></div><div class="r-mets">${msg ? `<div class="r-msg">${msg}</div>` : ''}</div>` : `<div class="r-left">${eb}<div class="hero">${hero}<i>${unit}</i></div></div>` +
       `<div class="r-mid"></div><div class="r-mets">${msg ? `<div class="r-msg">${msg}</div>` : ''}${mets.map(([l, v]) => `<div class="metric"><div class="ml">${l}</div><div class="mv">${v}</div></div>`).join('')}</div>`;
     rails.forEach(r => setText(r, html));
   }
@@ -273,7 +308,7 @@ export function createModes(ctx) {
   };
 
   // ---------------------------------------------------------------- label placer
-  const msgFor = (E, Mo, needMoon) => !E ? (needMoon && !Mo ? 'Place Earth and the Moon.' : 'Place Earth.') : needMoon && !Mo ? 'Place the Moon.' : '';
+  const msgFor = () => '';   // (no "Place ..." text at all, it is obvious: owner, Oct 27. The modes still stop and say nothing else)
   function obstacles(P, capIt) {
     const circ = [], rects = [];
     for (const k of ['earth', 'moon']) if (P[k]) circ.push([P[k].x_mm, P[k].y_mm, 39]);
@@ -599,7 +634,7 @@ export function createModes(ctx) {
     } else hide(M.droL, M.droDot);
     M.evs.forEach((e, i) => {
       const q = M.evPos[i], dv = e.ev.dv_kms;
-      annos.push({ it: e.lbl, x: q[0], y: q[1], r: MARK_R, html: `${EV_NAME[e.ev.name] || (e.ev.label || e.ev.name).toUpperCase()}${dv != null ? ` <b>${num(dv)}${U('km/s')}</b>` : ''}` });
+      annos.push({ it: e.lbl, x: q[0], y: q[1], r: MARK_R, html: `${EV_NAME[e.ev.name] || (e.ev.label || e.ev.name).toUpperCase()}${dv != null ? ` <b>${mps(dv)}${U('m/s')}</b>` : ''}` });
     });
 
     const snap = A ? nearest(path, A.x_mm, A.y_mm) : null;
@@ -609,14 +644,14 @@ export function createModes(ctx) {
       setPts(M.hi, slice(path, snap.idx));
       setPts(M.ring, circPts(snap.x, snap.y, MARK_R * 1.4, 28));
       const f = fieldsAt(snap.u), sp = f.r_moon < MOON_SOI ? f.v_moon : f.v_earth;
-      setRails('mission', { eyebrow: EYE, hero: num(f.dv), unit: 'km/s', mets: [
+      setRails('mission', { eyebrow: EYE, hero: mps(f.dv), unit: 'm/s', mets: [
         ['PHASE', PHASE_NAME[f.phase] || f.phase.toUpperCase()], ['T+', `${Math.floor(f.t_h / 24)}${U('d')} ${String(Math.floor(f.t_h % 24)).padStart(2, '0')}${U('h')}`],
-        ['SPEED', `${num(sp)}${U('km/s')}`]] });
+        ['SPEED', `${mps(sp)}${U('m/s')}`]] });
     } else {
       hide(M.hi, M.ring);
-      setRails('mission', { eyebrow: EYE, hero: num(mission.total_dv_kms), unit: 'km/s', mets: [
+      setRails('mission', { eyebrow: EYE, hero: mps(mission.total_dv_kms), unit: 'm/s', mets: [
         ['TIME', `${days >= 20 ? Math.round(days) : num(days, 1)}${U('d')}`],
-        ['SPIRAL', spiralDv != null ? `${num(spiralDv)}${U('km/s')}` : '—'], ['INSERTION', insDv != null ? `${num(insDv)}${U('km/s')}` : '—']] });
+        ['SPIRAL', spiralDv != null ? `${mps(spiralDv)}${U('m/s')}` : '—'], ['INSERTION', insDv != null ? `${mps(insDv)}${U('m/s')}` : '—']] });
     }
     placeAnnos('mission', annos, obstacles(P, M.cap));
   }
@@ -636,7 +671,7 @@ export function createModes(ctx) {
     setCaption(I.cap, 'COPLANAR HOHMANN · ALTITUDE TO SCALE, EARTH NOT');
     const EYE = 'INTERCEPT · SELDON-1 TO SELDON-2';
     const hideAll = () => { hide(I.geo, I.geoL, I.arc, I.wait, I.dep, I.rdv, I.b1, I.b2, I.link); I.orb.forEach(o => hide(o.line, o.dot)); };
-    if (!E) { hideAll(); setRails('intercept', { eyebrow: EYE, msg: 'Place Earth.' }); return; }
+    if (!E) { hideAll(); setRails('intercept', { eyebrow: EYE, msg: '' }); return; }
     const F = frameFor(P); if (!F) { hideAll(); return; }
     const wp = warpFor(F), ex = E.x_mm, ey = E.y_mm, annos = [];
     const rhoGeo = wp.rhoE(GEO_R);
@@ -666,7 +701,7 @@ export function createModes(ctx) {
     if (c && t) setPts(I.link, [W(c.p.x_mm, c.p.y_mm), W(t.p.x_mm, t.p.y_mm)]); else hide(I.link);   // straight line between the two Seldons
     if (!c || !t) {
       hide(I.arc, I.wait, I.dep, I.rdv, I.b1, I.b2);
-      setRails('intercept', { eyebrow: EYE, msg: !c && !t ? 'Place both Seldons.' : !c ? 'Place Seldon-1.' : 'Place Seldon-2.' });
+      setRails('intercept', { eyebrow: EYE, msg: '' });
       done(); return;
     }
     if (Math.abs(c.n - t.n) / Math.max(c.n, t.n) < 0.0015) {
@@ -690,9 +725,9 @@ export function createModes(ctx) {
     const dx0 = ex + c.rz * Math.cos(thd), dy0 = ey - c.rz * Math.sin(thd);
     const tha = thd + Math.PI, rx = ex + t.rz * Math.cos(tha), ry = ey - t.rz * Math.sin(tha);
     setPts(I.dep, circPts(dx0, dy0, MARK_R, 28)); setPts(I.rdv, circPts(rx, ry, MARK_R, 28));
-    annos.push({ it: I.b1, x: dx0, y: dy0, r: MARK_R, html: `BURN 1 <b>${num(h.dv1)}${U('km/s')}</b>` });
-    annos.push({ it: I.b2, x: rx, y: ry, r: MARK_R, html: `BURN 2 <b>${num(h.dv2)}${U('km/s')}</b>` });
-    setRails('intercept', { eyebrow: EYE, hero: num(h.total), unit: 'km/s', mets: [
+    annos.push({ it: I.b1, x: dx0, y: dy0, r: MARK_R, html: `BURN 1 <b>${mps(h.dv1)}${U('m/s')}</b>` });
+    annos.push({ it: I.b2, x: rx, y: ry, r: MARK_R, html: `BURN 2 <b>${mps(h.dv2)}${U('m/s')}</b>` });
+    setRails('intercept', { eyebrow: EYE, hero: mps(h.total), unit: 'm/s', mets: [
       ['TRANSFER', fmtHM(h.tof).replace(/ (h|m)/g, (m, u) => U(u))], ['NEXT WINDOW', fmtHM(tw).replace(/ (h|m)/g, (m, u) => U(u))]] });
     done();
   }
@@ -755,7 +790,7 @@ export function createModes(ctx) {
         }
       }
     }
-    const lab = (it, c, v) => { if (c && topo) { setText(it, `${v}<i>km/s</i>`); place(it, c.x, c.y, 'cm', tangentRot(c.dx, c.dy, c.y)); } else hide(it); };
+    const lab = (it, c, v) => { if (c && topo) { setText(it, `${mps(v)}<i>m/s</i>`); place(it, c.x, c.y, 'cm', tangentRot(c.dx, c.dy, c.y)); } else hide(it); };
     D.cnum.forEach((cn, q) => cn.lbls.forEach((it, z) => lab(it, cand[z][q], cn.v)));   // the map's labels stay on in corners-only text mode
   }
 
@@ -793,12 +828,12 @@ export function createModes(ctx) {
     const POI = false;
     if (POI) {
     setPts(D.geo, circPts(F.ex, F.ey, rGeo, 160));
-    annos.push({ it: D.geoL, x: F.ex, y: F.ey - rGeo, html: `GEO <b>${num(vGeo)}${U('km/s')}</b>`, spots: ringSpots(F.ex, F.ey, rGeo, [270, 90]) });
+    annos.push({ it: D.geoL, x: F.ex, y: F.ey - rGeo, html: `GEO <b>${mps(vGeo)}${U('m/s')}</b>`, spots: ringSpots(F.ex, F.ey, rGeo, [270, 90]) });
     const l1 = F.to(326400, 0), l2 = F.to(448900, 0);
-    setPts(D.l1, circPts(l1[0], l1[1], MARK_R, 28)); annos.push({ it: D.l1L, x: l1[0], y: l1[1], r: MARK_R, html: `L1 <b>${num(vL1)}${U('km/s')}</b>` });
-    setPts(D.l2, circPts(l2[0], l2[1], MARK_R, 28)); annos.push({ it: D.l2L, x: l2[0], y: l2[1], r: MARK_R, html: `L2 <b>${num(vL2)}${U('km/s')}</b>` });
+    setPts(D.l1, circPts(l1[0], l1[1], MARK_R, 28)); annos.push({ it: D.l1L, x: l1[0], y: l1[1], r: MARK_R, html: `L1 <b>${mps(vL1)}${U('m/s')}</b>` });
+    setPts(D.l2, circPts(l2[0], l2[1], MARK_R, 28)); annos.push({ it: D.l2L, x: l2[0], y: l2[1], r: MARK_R, html: `L2 <b>${mps(vL2)}${U('m/s')}</b>` });
     const rLLO = Math.max(wp.rhoM(R_M + 100), MOON_PIECE_R + 6);   // mission data's 70,000 km flyby alt switches the Moon push-out off, so keep the ring clear of the base
-    setPts(D.llo, circPts(F.mx, F.my, rLLO, 64)); annos.push({ it: D.lloL, x: F.mx, y: F.my - rLLO, html: `LLO <b>${num(vLLO)}${U('km/s')}</b>`, spots: ringSpots(F.mx, F.my, rLLO, [270, 90]) });
+    setPts(D.llo, circPts(F.mx, F.my, rLLO, 64)); annos.push({ it: D.lloL, x: F.mx, y: F.my - rLLO, html: `LLO <b>${mps(vLLO)}${U('m/s')}</b>`, spots: ringSpots(F.mx, F.my, rLLO, [270, 90]) });
     } else hide(D.geo, D.geoL, D.l1, D.l1L, D.l2, D.l2L, D.llo, D.lloL);
     let vDro = 0;
     if (mission?.dro?.points?.length) { let sum = 0; for (const [x, y] of mission.dro.points) sum += costAt(Math.hypot(x, y), Math.hypot(x - L_KM, y)); vDro = sum / mission.dro.points.length; }
@@ -806,16 +841,16 @@ export function createModes(ctx) {
       const X = path.dro.X, Y = path.dro.Y; let it = 0, ib = 0, il = 0, ir = 0;
       for (let i = 1; i < X.length; i++) { if (Y[i] < Y[it]) it = i; if (Y[i] > Y[ib]) ib = i; if (X[i] < X[il]) il = i; if (X[i] > X[ir]) ir = i; }
       setPts(D.dro, X.map((x, i) => W(x, Y[i])));
-      annos.push({ it: D.droL, x: X[it], y: Y[it], html: `DRO <b>${num(vDro)}${U('km/s')}</b>`, spots: curveSpots(X, Y, [ib, it, ir, il]) });
+      annos.push({ it: D.droL, x: X[it], y: Y[it], html: `DRO <b>${mps(vDro)}${U('m/s')}</b>`, spots: curveSpots(X, Y, [ib, it, ir, il]) });
     } else hide(D.dro, D.droL);
     // destination: Seldon-2
-    if (!B) { setRails('dvmap', { eyebrow: EYE, msg: 'Place Seldon-2 to price it.' }); hide(D.route, D.path); finish(); return; }
+    if (!B) { setRails('dvmap', { eyebrow: EYE, msg: '' }); hide(D.route, D.path); finish(); return; }
     const f = deltaV(F, B.x_mm, B.y_mm);
     if (!f) { hide(D.route, D.path); setRails('dvmap', { eyebrow: EYE, msg: 'Move Seldon-2 off the body.' }); finish(); return; }
     const bPt = ptKm(F, B.x_mm, B.y_mm), bothMoon = dvOrg.w > .5 && f.br === 'moon';
     const rt = f.br === 'moon' ? (bothMoon ? 'LUNAR SPIRAL' : 'SPIRAL + CAPTURE') : 'EARTH SPIRAL';
     const days = f.v * 1000 / 0.0005 / 86400;            // Edelbaum at 0.5 mm/s2
-    setRails('dvmap', { eyebrow: EYE, hero: num(f.v), unit: 'km/s', mets: [['TIME', `${days >= 20 ? Math.round(days) : num(days, 1)}${U('d')}`], ['ROUTE', rt]] });
+    setRails('dvmap', { eyebrow: EYE, hero: mps(f.v), unit: 'm/s', mets: [['TIME', `${days >= 20 ? Math.round(days) : num(days, 1)}${U('d')}`], ['ROUTE', rt]] });
     // route: Earth-centred prograde spiral, radius interpolated with angle, plus one extra turn (positions un-warped to km)
     // route: one smooth spiral in screen polar coordinates (about the Moon when both ends are in its sphere, else about Earth);
     // drawn in screen space so the map's radial warps can't put a kink in it. Phasing is ignored, so the sweep takes the shorter way.
@@ -1094,7 +1129,7 @@ export function createModes(ctx) {
     const A = P['seldon-1'], B = P['seldon-2'], EYE = `ENGAGEMENT · ${ENG_NAME[engScen()] || engScen().toUpperCase()}`;
     ENG.zoomNow = ENG.zoomNow ?? 1;
     const hideAll = () => hide(G.ringO, G.ringA, G.coastO, G.coastA, G.trailO, G.trailA, G.keep, G.dotO, G.dotA, G.thrO, G.thrA, G.scaleL, G.scaleT);
-    if (!A || !B) { hideAll(); setRails('engage', { eyebrow: EYE, msg: 'Place Seldon-1 and Seldon-2.' }); return; }
+    if (!A || !B) { hideAll(); setRails('engage', { eyebrow: EYE, msg: '' }); return; }
     const Ee = engEarth(), K = engK(), pA = polar(Ee, A), pB = polar(Ee, B);
     // the sim takes the CHASER's offset from the TARGET (the reference orbit); Defend: we are the target, Pursue: the chaser
     const weChase = engScen().startsWith('pursue');
@@ -1211,19 +1246,19 @@ export function createModes(ctx) {
     oS1: { c: OC.s1, w: 2.6, op: .95 }, oS2: { c: OC.s2, w: 2.6, op: .95 }, oMoon: { c: OC.moon, w: 1.4, op: .5, dash: 5, gap: 4 },
     oRef: { c: C.fog200, w: 1.3, op: .6, dash: 3, gap: 4 }, oSoi: { c: C.fog300, w: 1.2, op: .55, dash: 2, gap: 4 },
     // transfer: a solid line in the engine colour, light dashes running along it toward Seldon-2, an arrowhead at the end
-    oGT: { c: OC.gt, w: 2.2, op: .25, dash: 6, gap: 5 }, oET: { c: OC.et, w: 1.8, op: .25, dash: 6, gap: 5 },   // 25%, dashed (Oct 9: they dominated the scene)
-    oGTf: { c: 0xffc2bd, w: 2.2, op: .55, dash: 5, gap: 9 }, oETf: { c: 0xe6d4ff, w: 1.8, op: .55, dash: 5, gap: 9 },
-    oGTa: { c: OC.gt, w: 2.4, op: .25 }, oETa: { c: OC.et, w: 2.4, op: .25 },
+    oGT: { c: OC.gt, w: 2.2, op: .25, dash: 6, gap: 5, path: true }, oET: { c: OC.et, w: 1.8, op: .25, dash: 6, gap: 5, path: true },   // 25%, dashed (Oct 9: they dominated the scene)
+    oGTf: { c: 0xffc2bd, w: 2.2, op: .55, dash: 5, gap: 9, path: true }, oETf: { c: 0xe6d4ff, w: 1.8, op: .55, dash: 5, gap: 9, path: true },
+    oGTa: { c: OC.gt, w: 2.4, op: .25, path: true }, oETa: { c: OC.et, w: 2.4, op: .25, path: true },
     // Seldon-1 coasting along its orbit to the first burn (dotted), and a tick across the path where that burn is (Oct 12)
-    oGTc: { c: OC.gt, w: 1.8, op: .45, dash: 1.2, gap: 3.5 }, oETc: { c: OC.et, w: 1.8, op: .45, dash: 1.2, gap: 3.5 },
+    oGTc: { c: OC.gt, w: 1.8, op: .45, dash: 1.2, gap: 3.5, path: true }, oETc: { c: OC.et, w: 1.8, op: .45, dash: 1.2, gap: 3.5, path: true },
   });
   const OR = { ang: [null, null, null], last: [null, null, null] };
   OR.ring = [mkLine('orbits', 'oS1'), mkLine('orbits', 'oS2'), mkLine('orbits', 'oMoon')];   // Seldon-1, Seldon-2, Moon
   OR.dot = [mkDot('orbits', OC.s1, 2, 1), mkDot('orbits', OC.s2, 2, 1), mkDot('orbits', OC.moon, 1.6, .8)];
   OR.tag = [mkText('orbits', 'mt-tag'), mkText('orbits', 'mt-tag'), mkText('orbits', 'mt-tag')]; OR.slot = [{}, {}, {}];
   OR.soi = mkLine('orbits', 'oSoi');
-  OR.leo = mkLine('orbits', 'oRef'); OR.leoL = mkText('orbits', 'mt-tag dim');
-  OR.geo = mkLine('orbits', 'oRef'); OR.geoL = mkText('orbits', 'mt-tag dim'); OR.foot = mkText('orbits', 'mt-tag dim');
+  OR.leo = mkLine('orbits', 'oRef'); OR.leoL = mkText('orbits', 'mt-tag dim'); OR.leoL2 = mkText('orbits', 'mt-tag dim');   // L2: the other side's label (geo, dro)
+  OR.geo = mkLine('orbits', 'oRef'); OR.geoL = mkText('orbits', 'mt-tag dim'); OR.geoL2 = mkText('orbits', 'mt-tag dim'); OR.foot = mkText('orbits', 'mt-tag dim');
   OR.tr = { gt: mkLine('orbits', 'oGT'), et: mkLine('orbits', 'oET'), gtF: mkLine('orbits', 'oGTf'), etF: mkLine('orbits', 'oETf'),
     gtA: mkLine('orbits', 'oGTa'), etA: mkLine('orbits', 'oETa'), gtC: mkLine('orbits', 'oGTc'), etC: mkLine('orbits', 'oETc'),
     read: mkText('orbits', 'mt-xfer'), key: null };   // read: GT / ET delta-v and fuel table, top centre
@@ -1254,9 +1289,19 @@ export function createModes(ctx) {
   let tagRects = [], TAG_TOP = MARG, TAG_BOT = MARG + ORB_FOOT, TAG_FLIP = false;   // the band tags stay in (mm from each edge); FLIP: face the nearest long edge (geo, dro)
   const TAG_CH = .62;                                          // Space Mono advance (.6 em) + a little tracking, per character
   const plainLen = html => html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').length;
-  function tagAt(it, html, x, y, em = 9.5) {
+  // a label's box, mm: measured once per text / scale / type preset (exact for any face and size), else the Space Mono estimate
+  function boxOf(it, em) {
+    const k = it.html + '|' + SC() + '|' + tyName;
+    if (it.bxk !== k) {
+      const el = it.obj, prev = el.style.display; el.style.display = '';
+      const w = el.offsetWidth / SC(), h = el.offsetHeight / SC(); el.style.display = prev;
+      it.bxk = k; it.bx = w > 0 ? { w: w + 4, h: h + 2 } : { w: plainLen(it.html) * em * TAG_CH + 10, h: em * 1.6 };
+    }
+    return it.bx;
+  }
+  function tagAt(it, html, x, y, em = 9.5, rot = null) {   // rot: a fixed facing (deg); null: the nearest long edge (TAG_FLIP)
     setText(it, html);
-    const w = plainLen(html) * em * TAG_CH + 10, h = em * 1.6;
+    const { w, h } = boxOf(it, em);
     x = Math.max(MARG + w / 2, Math.min(SW() - MARG - w / 2, x));
     y = Math.max(TAG_TOP + h / 2, Math.min(SH() - TAG_BOT, y));
     for (let k = 0; k < 12; k++) {
@@ -1265,44 +1310,63 @@ export function createModes(ctx) {
       y = hit.y + (y >= hit.y ? 1 : -1) * ((hit.h + h) / 2 + 3);
     }
     tagRects.push({ x, y, w, h });
-    place(it, x, y, 'cm', TAG_FLIP ? faceRot(y) : 0);
+    place(it, x, y, 'cm', rot ?? (TAG_FLIP ? faceRot(y) : 0));
   }
   // the physical pieces (tracked centre + footprint radius, mm, incl. the Seldons' panels): labels never sit on one.
   // Seldon span ~100 mm measured in the camera image (Oct 7); Earth ~70 mm.
   const PIECE_R = { earth: 38, moon: 28, 'seldon-1': 56, 'seldon-2': 56 }, TAG_GAP = 6;
-  let pieceObs = [];
+  // pathObs: points along the drawn transfer (geo / dro): a label keeps off its lines where it can (Oct 25), else only the pieces
+  let pieceObs = [], pathObs = [];
   const rectClear = (x, y, w, h, o) => Math.hypot(Math.max(Math.abs(o.x - x) - w / 2, 0), Math.max(Math.abs(o.y - y) - h / 2, 0)) >= o.r;
   const offPieces = (x, y, w, h) => pieceObs.every(o => rectClear(x, y, w, h, o));
   // a piece's label beside it: the first direction (preferred u first, then fanning out; last frame's choice before all)
-  // where the whole label clears every piece, stays on screen and misses the labels already placed
+  // where the whole label clears every piece (and the path, if any direction does, up to 65 mm farther out), stays on screen and misses the labels already placed
   const TAG_FAN = [0, 25, -25, 50, -50, 75, -75, 100, -100, 130, -130, 180];
+  const tagOk = (x, y, w, h, line) => x - w / 2 >= MARG && x + w / 2 <= SW() - MARG && y - h / 2 >= TAG_TOP && y + h / 2 <= SH() - TAG_BOT && offPieces(x, y, w, h)
+    && !tagRects.some(r => Math.abs(r.x - x) < (r.w + w) / 2 + 2 && Math.abs(r.y - y) < (r.h + h) / 2 + 2) && (!line || pathObs.every(o => rectClear(x, y, w, h, o)));   // whole label on screen, off the pieces and the labels placed
   function tagBeside(it, html, px, py, ux, uy, slot, em = 9.5) {
     setText(it, html);
-    const w = plainLen(html) * em * TAG_CH + 10, h = em * 1.6, a0 = Math.atan2(uy, ux);
+    const { w, h } = boxOf(it, em), a0 = Math.atan2(uy, ux);
     const own = pieceObs.find(o => o.x === px && o.y === py) || { x: px, y: py, r: 30 };
-    const ok = (x, y) => x - w / 2 >= MARG && x + w / 2 <= SW() - MARG && y - h / 2 >= TAG_TOP && y + h / 2 <= SH() - TAG_BOT && offPieces(x, y, w, h)
-      && !tagRects.some(r => Math.abs(r.x - x) < (r.w + w) / 2 + 2 && Math.abs(r.y - y) < (r.h + h) / 2 + 2);
     const at = deg => {                                        // nearest spot along this direction that clears the piece itself
       const a = a0 + deg * Math.PI / 180, cx = Math.cos(a), cy = Math.sin(a);
       for (let d = 0; d < 320; d += 3) if (rectClear(px + cx * d, py + cy * d, w, h, own)) return [px + cx * d, py + cy * d];
       return [px + cx * 320, py + cy * 320];
     };
     const order = slot.deg != null ? [slot.deg, ...TAG_FAN.filter(d => d !== slot.deg)] : TAG_FAN;
-    for (const deg of order) {
-      const [x, y] = at(deg);
-      if (ok(x, y)) { slot.deg = deg; tagRects.push({ x, y, w, h }); place(it, x, y, 'cm', TAG_FLIP ? faceRot(y) : 0); return; }
+    for (const [line, far] of pathObs.length ? [[true, 0], [true, 20], [true, 40], [true, 65], [false, 0]] : [[false, 0]]) for (const deg of order) {   // off the path: a little farther out before on it (Oct 26: the DRO profile's loops left no clear angle close by)
+      const [x0, y0] = at(deg), a = a0 + deg * Math.PI / 180, x = x0 + Math.cos(a) * far, y = y0 + Math.sin(a) * far;
+      if (tagOk(x, y, w, h, line)) { slot.deg = deg; tagRects.push({ x, y, w, h }); place(it, x, y, 'cm', TAG_FLIP ? faceRot(y) : 0); return; }
     }
     slot.deg = null; const [x, y] = at(0); tagAt(it, html, x, y, em);   // nowhere clean: the old rule (clamped, nudged off other labels)
   }
-  // a reference ring around Earth with its label on the ring, at the first angle (from a few) that is on screen
+  // a reference ring around Earth with its label on the ring, at the first angle (from a few) that is on screen and clear of
+  // the pieces. Two labels (geo / dro, Oct 25): one on the top half, one on the bottom, so each long side reads one (each
+  // faces its nearest edge); each takes the first clear angle on its half, so it moves out of a Seldon's way.
+  const RING_DEGS = [[118, 62, 242, 298, 180, 0]], RING_DEGS2 = [[90, 118, 62, 140, 40, 160, 20], [270, 242, 298, 220, 320, 200, 340]];
   function refRing(line, lbl, maps, r, name) {
-    const E = maps.E, rho = E.rho(r);
-    setPts(line, circPts(E.cx, E.cy, rho, 192));
-    for (const deg of [118, 62, 242, 298, 180, 0]) {
-      const a = deg * Math.PI / 180, x = E.cx + rho * Math.cos(a), y = E.cy - rho * Math.sin(a);
-      if (x > MARG + 30 && x < SW() - MARG - 30 && y > TAG_TOP + 12 && y < SH() - TAG_BOT - 6 && offPieces(x, y, plainLen(name) * 8 * TAG_CH + 10, 8 * 1.6)) { tagAt(lbl, name, x, y, 8); return; }
+    const E = maps.E, rho = E.rho(r), lbls = Array.isArray(lbl) ? lbl : [lbl], per = line.st.dash + line.st.gap, L = 384 * rho * Math.sin(Math.PI / 192);
+    setPts(line, circPts(E.cx, E.cy, rho, 192)); line.obj.material.dashScale = Math.max(1, Math.round(L / per)) * per / L;   // a whole number of dashes round the ring (no seam at 3 o'clock, Oct 25)
+    const w = plainLen(name) * 8 * TAG_CH + 10, h = 8 * 1.6;
+    lbls.forEach((it, i) => {
+      for (const line of pathObs.length ? [true, false] : [false]) for (const deg of (lbls.length > 1 ? RING_DEGS2 : RING_DEGS)[i]) {   // off the drawn path's lines too, where an angle is (Oct 25)
+        const a = deg * Math.PI / 180, x = E.cx + rho * Math.cos(a), y = E.cy - rho * Math.sin(a);
+        if (x > MARG + 30 && x < SW() - MARG - 30 && y > TAG_TOP + 12 && y < SH() - TAG_BOT - 6 && offPieces(x, y, w, h) && (!line || pathObs.every(o => rectClear(x, y, w, h, o)))) { tagAt(it, name, x, y, 8, lbls.length > 1 ? (i ? 0 : 180) : null); return; }   // the pair: top faces the far side, bottom the near
+      }
+      hide(it);
+    });
+  }
+  // a label on an orbit ring (the DRO's), at the first angle fanning out from th0 (last frame's before all) where it passes
+  // tagBeside's checks (Oct 25: clamping the far point onto the table pulled it up to 70 mm inside the ring, onto the footnote)
+  const RING_FAN = [0, 20, -20, 40, -40, 60, -60, 90, -90, 120, -120, 150, -150, 180];
+  function tagOnRing(it, html, B, rho, th0, slot, em = 8) {
+    setText(it, html);
+    const { w, h } = boxOf(it, em), order = slot.deg != null ? [slot.deg, ...RING_FAN.filter(d => d !== slot.deg)] : RING_FAN;
+    for (const line of pathObs.length ? [true, false] : [false]) for (const deg of order) {
+      const [x, y] = B.xy(rho, th0 + deg * Math.PI / 180);
+      if (tagOk(x, y, w, h, line)) { slot.deg = deg; tagRects.push({ x, y, w, h }); place(it, x, y, 'cm', TAG_FLIP ? faceRot(y) : 0); return; }
     }
-    hide(lbl);
+    slot.deg = null; const [x, y] = B.xy(rho, th0); tagAt(it, html, x, y, em);   // nowhere clean: clamped, as before
   }
   // demo stand-ins: Seldon-1 in LEO up-left of Earth, Seldon-2 in a 100 km lunar orbit above the Moon (wherever they are)
   function orbitsDemo(pc, noMoon) {
@@ -1338,27 +1402,42 @@ export function createModes(ctx) {
     }
     return out.length > 1 ? out : [pts[0], pts[0]];
   };
-  function updTransfer(maps, a, b, dt, moving, fromTo, G) {   // G: the geo / dro look (our electric path only, mint, numbers on the rails)
-    const T = G ? OR.trG : OR.tr, ks = G ? ['et'] : ['gt', 'et'], xk = a && b ? [maps.E.cx, maps.E.cy, maps.M?.cx, maps.M?.cy, a.rho, a.th, b.rho, b.th, maps.k * 1e4].map(v => (v ?? 0).toFixed(3)).join() : null;
-    if (T.xk !== xk) { T.xk = xk; OGEO.LOOPS.etMax = G === 'dro' ? 1 : G ? 2 : 6; T.X = xk && OGEO.transfer(maps, a, b); }   // geo / dro: fewer loops, one clean path
-    const X = T.X;
-    const its = ks.flatMap(k => [T[k], T[k + 'F'], T[k + 'A'], T[k + 'C']]);
-    if (!X) { hide(...its, T.read); T.key = null; T.draw = 0; return; }
-    if (moving) { hide(...its); T.draw = 0; T.key = null; T.still = 0; }
+  // the draw-out clock (T.draw 0..1): reset while a piece moves, runs TR_WAIT_S after they settle; returns whether it is still waiting.
+  // live (LEO TO DRO, owner Oct 26: "keep the transit drawn at all times and update it as seldon 1 moves around"): drawn out once
+  // when it first appears, then a moving piece keeps it whole, following the piece
+  function trClock(T, its, dt, moving, live = false) {
+    if (moving && live && T.full) { T.draw = 1; T.still = TR_WAIT_S; }   // (T.full: drawn out whole since the last redraw)
+    else if (moving && !live) { hide(...its); T.draw = 0; T.key = null; T.still = 0; }   // (live, not yet drawn out whole: it carries on drawing out while the piece moves; Oct 27, it hid and started again, so a piece picked up soon after a refresh took the route away)
     else { T.still = (T.still ?? 0) + dt; if (T.still >= TR_WAIT_S && !PL.paused) T.draw = Math.min(1, (T.draw ?? 0) + dt / TR_DRAW_S); }
     if (T.seekN !== PL.n) { T.seekN = PL.n; if (PL.f != null && !moving) { T.still = TR_WAIT_S; T.draw = PL.f; } }
     if (TR_DONE && !moving) { T.still = TR_WAIT_S; T.draw = 1; }   // test hook ?trdone: the paths fully drawn (headless runs see few frames)
-    const waiting = !moving && T.still < TR_WAIT_S;
+    if (T.draw >= 1) T.full = true;
+    return (!moving || live) && T.still < TR_WAIT_S;
+  }
+  function updTransfer(maps, a, b, dt, moving, fromTo, G) {   // G: the geo / dro look (one path: the presenter's engine, or the DRO's profile; numbers on the rails)
+    const T = G ? OR.trG : OR.tr, ks = ['gt', 'et'], xk = a && b ? [maps.E.cx, maps.E.cy, maps.M?.cx, maps.M?.cy, a.rho, a.th, b.rho, b.th, maps.k * 1e4, maps.room?.y0, maps.room?.y1].map(v => (v ?? 0).toFixed(3)).join() : null;
+    const thin = G === 'dro' && moving && T.X && xk && performance.now() - (T.xt || 0) < 50;   // (LEO TO DRO follows a moving piece live: at most 20 routes a second, ~5 ms each)
+    if (T.xk !== xk && !thin) { T.xk = xk; T.xt = performance.now(); OGEO.LOOPS.etMax = G === 'dro' ? 1 : G ? 2 : 6; Object.assign(OGEO.LOOPS, G ? { gtMin: 1, gtMax: 1 } : { gtMin: 0, gtMax: 2 }); T.X = xk && OGEO.transfer(maps, a, b); }   // geo / dro: fewer loops, one clean path; chemical one loop, then on out (owner, Oct 26: its 25 m/s burns every 12 h make it loops too, fewer than electric's)
+    const X = xk ? T.X : null;   // (xk is cleared to null on scale / opts changes: with no pair, T.X can be an old one)
+    const its = G ? trGAll() : ks.flatMap(k => [T[k], T[k + 'F'], T[k + 'A'], T[k + 'C']]);
+    if (!X) { hide(...its, T.read); T.key = null; T.draw = 0; return; }
+    if (G) return updRoute(maps, T, X, a, b, dt, moving);
+    const waiting = trClock(T, its, dt, moving);
     const key = [maps.E.cx, maps.E.cy, maps.M?.cx, maps.M?.cy, a.rho, a.th, b.rho, b.th].map(v => (v ?? 0).toFixed(2)).join();
     if (T.key !== key) {
       T.key = key;
-      for (const [k, r] of [['gt', X.gt], ['et', X.et]].filter(([k]) => ks.includes(k))) {
+      for (const [k, r] of [['gt', X.gt], ['et', X.et]]) {
         const nl = r.lead.length, pts = [...r.lead, ...r.path.flat()], n = pts.length, tip = pts[n - 1];   // coast to the first burn, then the transfer
         let j = n - 2; while (j > 0 && Math.hypot(pts[j][0] - tip[0], pts[j][1] - tip[1]) < 6) j--;   // direction over the last 6 mm
         const ux = tip[0] - pts[j][0], uy = tip[1] - pts[j][1], ul = Math.hypot(ux, uy) || 1, dx = ux / ul, dy = uy / ul, L = 7, Wd = 4;
         setPts(T[k + 'A'], [W(tip[0] - dx * L - dy * Wd, tip[1] - dy * L + dx * Wd), W(tip[0], tip[1]), W(tip[0] - dx * L + dy * Wd, tip[1] - dy * L - dx * Wd)]);
         const cum = [0]; for (let i = 1; i < n; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
-        T[k + 'P'] = { pts, cum, nl }; T[k + 'Drawn'] = -1;
+        // obs: the arrowhead and, every 12 mm, the stretch of path ending on Seldon-2's orbit (labels and tags keep off them);
+        // line: the whole path every 8 mm (tags keep off it where they can) (updGD)
+        const obs = [{ x: tip[0], y: tip[1], r: 16 }], onRing = p => Math.abs(b.B.inv(p[0], p[1]).rho - b.rho) < 1, line = [];
+        for (let i = n - 1, c = cum[n - 1]; i > nl && onRing(pts[i]); i--) if (c - cum[i] >= 12) { c = cum[i]; obs.push({ x: pts[i][0], y: pts[i][1], r: 6 }); }
+        for (let i = Math.max(0, nl - 1), c = -Infinity; i < n; i++) if (cum[i] - c >= 8) { c = cum[i]; line.push({ x: pts[i][0], y: pts[i][1], r: 3 }); }
+        T[k + 'P'] = { pts, cum, nl, obs, line }; T[k + 'Drawn'] = -1;
       }
     }
     if (moving || waiting) hide(...its);                        // nothing while a piece moves or until the pause is over (setPts above turns arrowheads on)
@@ -1369,18 +1448,17 @@ export function createModes(ctx) {
         if (T[k + 'Drawn'] !== f) {
           const pre = done ? P.pts : prefix(P.pts, P.cum, f), nl = P.nl;   // drawn out along the coast first, then the transfer
           if (nl > 1) setPts(T[k + 'C'], pre.slice(0, Math.min(nl, pre.length)).map(p => W(p[0], p[1]))); else hide(T[k + 'C']);
-          const past = pre.length > nl || (nl === 0 && pre.length > 1);
+          const past = pre.length > nl || (nl === 0 && pre.length > 1);   // (the gradient runs over what is drawn so far: a bright head as it draws out)
           if (past) setPts(T[k], pre.slice(Math.max(0, nl - 1)).map(p => W(p[0], p[1]))); else hide(T[k]);
           T[k + 'Drawn'] = f;
         }
         T[k + 'A'].on = done;
       }
     }
-    if (G) return;                                              // geo / dro read the numbers off the rails
     // one table: engine | delta-v | fuel, then the route it is for underneath (names in their orbit colours)
     const row = (id, r) => { const pm = OGEO.PROP_MODES.find(m => m.id === id);
       return `<span class="xk" style="color:${hex(OC[id.toLowerCase()])}">${id}</span><span class="xn">${pm.name}</span>`
-        + `<span class="xv">${r.dv.toFixed(2)}</span><span class="xu">km/s</span><span class="xv">${Math.round(r.mp)}</span><span class="xu">kg</span>`
+        + `<span class="xv">${mps(r.dv)}</span><span class="xu">m/s</span><span class="xv">${Math.round(r.mp)}</span><span class="xu">kg</span>`
         + `<span class="xv">${fmtTp(r.t)[0]}</span><span class="xu">${fmtTp(r.t)[1]}</span>`; };
     const html = `<div class="xg"><span></span><span></span><span class="xh">DELTA-V</span><span></span><span class="xh">FUEL</span><span></span><span class="xh">TIME</span><span></span>${row('GT', X.gt)}${row('ET', X.et)}</div>`
       + `<div class="xf">FROM <span style="color:${hex(OC.s1)}">${fromTo?.[0] ?? 'SELDON-1'}</span> TO <span style="color:${hex(OC.s2)}">${fromTo?.[1] ?? 'SELDON-2'}</span></div>`;
@@ -1391,13 +1469,87 @@ export function createModes(ctx) {
     const bx = T.readBox || { w: 300, h: 60 };
     tagRects.push({ x: SW() / 2, y: MARG + bx.h / 2, w: bx.w, h: bx.h });
   }
+  // geo / dro: the one route drawn (gdRoute: the presenter's engine, or the DRO's profile) in runs of one engine each (the profile:
+  // its chemical passes, then the electric rest), one line per engine (OR.trG.gt / .et), an arrowhead in the last run's colour.
+  // A run that hands over ends on a whole dash (dashScale), so the next one's first dash carries it on with no gap.
+  function updRoute(maps, T, X, a, b, dt, moving) {
+    const r = gdRoute(X), its = trGAll(), live = T.mode === 'dro', waiting = trClock(T, its, dt, moving, live);
+    const key = [maps.E.cx, maps.E.cy, maps.M?.cx, maps.M?.cy, a.rho, a.th, b.rho, b.th].map(v => (v ?? 0).toFixed(2)).join() + r.kind;
+    if (T.key !== key) {
+      T.key = key; hide(...its);
+      const nl = r.lead.length, pts = [...r.lead, ...r.path.flat()], n = pts.length, tip = pts[n - 1], kinds = r.kinds || r.path.map(() => r.kind), kl = kinds[kinds.length - 1];
+      let j = n - 2; while (j > 0 && Math.hypot(pts[j][0] - tip[0], pts[j][1] - tip[1]) < 6) j--;   // direction over the last 6 mm
+      const ux = tip[0] - pts[j][0], uy = tip[1] - pts[j][1], ul = Math.hypot(ux, uy) || 1, dx = ux / ul, dy = uy / ul, L = 7, Wd = 4;
+      setPts(T[kl + 'A'], [W(tip[0] - dx * L - dy * Wd, tip[1] - dy * L + dx * Wd), W(tip[0], tip[1]), W(tip[0] - dx * L + dy * Wd, tip[1] - dy * L - dx * Wd)]);
+      const cum = [0]; for (let i = 1; i < n; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+      // obs: the arrowhead and, every 12 mm, the stretch of path ending on the target's orbit (labels and tags keep off them);
+      // line: the whole path every 8 mm (tags keep off it where they can) (updGD)
+      const obs = [{ x: tip[0], y: tip[1], r: 16 }], onRing = p => Math.abs(b.B.inv(p[0], p[1]).rho - b.rho) < 1, line = [];
+      for (let i = n - 1, c = cum[n - 1]; i > nl && onRing(pts[i]); i--) if (c - cum[i] >= 12) { c = cum[i]; obs.push({ x: pts[i][0], y: pts[i][1], r: 6 }); }
+      for (let i = Math.max(0, nl - 1), c = -Infinity; i < n; i++) if (cum[i] - c >= 8) { c = cum[i]; line.push({ x: pts[i][0], y: pts[i][1], r: 3 }); }
+      const runs = []; let o = nl;   // (each path segment starts on the last one's end point)
+      r.path.forEach((seg, i) => { const i0 = i ? o : Math.max(0, nl - 1), i1 = o + seg.length - 1; if (runs.length && runs[runs.length - 1].k === kinds[i]) runs[runs.length - 1].i1 = i1; else runs.push({ k: kinds[i], i0, i1 }); o += seg.length; });
+      runs.forEach(({ k, i0, i1 }, i) => { const st = T[k].st, per = st.dash + st.gap, Lr = Math.max(1e-6, cum[i1] - cum[i0]);
+        T[k].obj.material.dashScale = i < runs.length - 1 ? (Math.max(0, Math.round((Lr - st.dash) / per)) * per + st.dash) / Lr : 1; });
+      // the loops, for the cut: how far out along the line from Earth toward the Moon (u) each one reaches (A, its apoapsis) and where it
+      // ends (e, the point index of the periapsis after it); what follows the last one (out to the DRO and round it) is not a loop
+      const ex = maps.M ? [maps.M.cx - maps.E.cx, maps.M.cy - maps.E.cy] : [1, 0], el = Math.hypot(...ex) || 1, u = [ex[0] / el, ex[1] / el], eo = [maps.E.cx, maps.E.cy];
+      const Xs = pts.map(p => (p[0] - eo[0]) * u[0] + (p[1] - eo[1]) * u[1]), loops = [];
+      for (let i = runs[0].i0 + 1, up = true, ext = Xs[runs[0].i0], ie = runs[0].i0, A = 0; i < n; i++) {   // (turning points 3 mm past, so the samples' wobble is none)
+        const v = Xs[i];
+        if (up) { if (v > ext) ext = v; else if (v < ext - 3) { A = ext; up = false; ext = v; ie = i; } }
+        else if (v < ext) { ext = v; ie = i; } else if (v > ext + 3) { loops.push({ A, e: ie }); up = true; ext = v; }
+      }
+      T.P = { pts, cum, nl, obs, line, runs, kl, loops, u, o: eo }; T.Drawn = null; T.loopN = null;
+    }
+    // the cut (LEO TO DRO, T.prog from updGD): the loops behind the piece are undrawn, a whole loop at a time, by how far out the piece is
+    // along the line toward the Moon only (owner, Oct 27: "vertical movement shouldnt affect it and you should only undraw or redraw a circle
+    // if the seldon is clearly past it from an X perspective stability matters here"): a loop goes once the piece is CUT_PAST mm beyond its
+    // apoapsis and comes back once it is CUT_PAST short of it; wiped off over a fraction of a second (eased). In LEO none, in the DRO all.
+    const P = T.P, L = P.cum[P.cum.length - 1], c0 = P.cum[P.runs[0].i0], pr = T.prog, lp = P.loops;
+    if (!pr || pr.st === 'start') T.loopN = 0;
+    else if (pr.st === 'on') {
+      const x = (pr.x - P.o[0]) * P.u[0] + (pr.y - P.o[1]) * P.u[1];
+      if (T.loopN == null) T.loopN = lp.filter(l => x > l.A + CUT_PAST).length;   // (a new route: where the piece is, no history)
+      while (T.loopN < lp.length && x > lp[T.loopN].A + CUT_PAST) T.loopN++;
+      while (T.loopN > 0 && x < lp[T.loopN - 1].A - CUT_PAST) T.loopN--;
+    }
+    const want = T.want = pr?.st === 'done' ? L : T.loopN ? P.cum[lp[T.loopN - 1].e] : c0;
+    if (T.cutK !== T.key || T.cut == null) { T.cutK = T.key; T.cut = want; }
+    else { const d = want - T.cut; T.cut = Math.abs(d) < .5 ? want : T.cut + d * (1 - Math.exp(-dt / .25)); }
+    if ((moving && !live) || waiting) { hide(...its); return; }   // nothing while a piece moves (LEO TO DRO: it follows) or until the pause is over (setPts above turns the arrowhead on)
+    // drawn out from the cut (the route's start, or where the piece is) to its end; its dashes stay put as the cut moves (dashOffset)
+    const f = trEase(T.draw), done = T.draw >= 1, s0 = Math.max(c0, Math.min(L, T.cut)), s1 = done ? L : s0 + (L - s0) * f, dk = s0.toFixed(2) + ',' + s1.toFixed(2) + ',' + f;
+    if (T.Drawn !== dk) {
+      const fr = c => (c - s0) / Math.max(1e-9, s1 - s0);   // the gradient over what is drawn so far, across the runs: a bright head as it draws out
+      const a0 = GRAD_A0 + (1 - GRAD_A0) * Math.max(0, (f - .8) / .2);   // evening out over the last fifth: drawn, the route is one strength (Oct 26: a dim tail left the DRO's chemical passes the faintest part)
+      for (const { k, i0, i1 } of P.runs) {
+        const q = span(P, i0, i1, s0, s1), m = T[k].obj.material;
+        if (q.pts.length > 1) { setPts(T[k], q.pts.map(p => W(p[0], p[1])), q.c.map(fr), a0); m.dashOffset = (q.c[0] - P.cum[i0]) * m.dashScale; } else hide(T[k]);
+      }
+      T.Drawn = dk;
+    }
+    T[P.kl + 'A'].on = done && s0 < L - 1;
+  }
+  // the part of P's points i0..i1 between arc lengths s0 and s1 (mm), its ends cut to them: { pts, c (their arc lengths) }
+  function span(P, i0, i1, s0, s1) {
+    const { pts, cum } = P, a = Math.max(s0, cum[i0]), z = Math.min(s1, cum[i1]), out = [], c = [];
+    if (z - a < 1e-6) return { pts: out, c };
+    const at = (i, s) => { const t = (s - cum[i - 1]) / Math.max(1e-9, cum[i] - cum[i - 1]); return [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t]; };
+    let j = i0 + 1; while (j < i1 && cum[j] <= a) j++;
+    out.push(at(j, a)); c.push(a);
+    for (; j <= i1 && cum[j] < z; j++) { out.push(pts[j]); c.push(cum[j]); }
+    out.push(at(j, z)); c.push(z);
+    return { pts: out, c };
+  }
+  const CUT_PAST = 20;                                           // mm past a loop's apoapsis (along the Earth-Moon line) before it is undrawn, and short of it before it is back
   function updOrbits(P, dt) {
     if (grp() === 'orbits') OR.v = current;                       // the variant on screen (kept while this group fades out)
     if (OR.v && OR.v !== 'orbits') return updGD(P, dt, OR.v);
-    hide(...gdOnly(), OR.trG.et, OR.trG.etA, OR.trG.etC); OR.trG.key = null; OR.ring[1].dim = 1;
+    hide(...gdOnly(), ...trGAll()); OR.trG.key = null; OR.ring[1].dim = 1;
     tagRects = []; TAG_TOP = MARG; TAG_BOT = MARG + ORB_FOOT; TAG_FLIP = false;
-    pieceObs = Object.entries(P).filter(([k]) => PIECE_R[k]).map(([k, p]) => ({ x: p.x_mm, y: p.y_mm, r: PIECE_R[k] + TAG_GAP }));
-    const zs = Object.values(OR.z), all = [...OR.ring, ...OR.dot, ...OR.tag, OR.soi, OR.leo, OR.leoL, OR.geo, OR.geoL, OR.foot, OR.tr.gt, OR.tr.et, OR.tr.gtF, OR.tr.etF, OR.tr.gtA, OR.tr.etA, OR.tr.gtC, OR.tr.etC, OR.tr.read, ...zs];
+    pieceObs = Object.entries(P).filter(([k]) => PIECE_R[k]).map(([k, p]) => ({ x: p.x_mm, y: p.y_mm, r: PIECE_R[k] + TAG_GAP })); pathObs = [];
+    const zs = Object.values(OR.z), all = [...OR.ring, ...OR.dot, ...OR.tag, OR.soi, OR.leo, OR.leoL, OR.leoL2, OR.geo, OR.geoL, OR.geoL2, OR.foot, OR.tr.gt, OR.tr.et, OR.tr.gtF, OR.tr.etF, OR.tr.gtA, OR.tr.etA, OR.tr.gtC, OR.tr.etC, OR.tr.read, ...zs];
     const onTable = p => p && p.x_mm >= 0 && p.x_mm <= SW() && p.y_mm >= 0 && p.y_mm <= SH();
     const eOn = onTable(P.earth), mOn = onTable(P.moon);
     OR.zoomOn = eOn !== mOn;
@@ -1436,7 +1588,7 @@ export function createModes(ctx) {
       if (OR.last[k] === null || Math.abs(wrapPi(b.th - OR.last[k])) > 1e-3) OR.ang[k] = b.th;   // the piece moved: the dot restarts from it
       OR.last[k] = b.th; OR.ang[k] += b.dir * b.n * rate * (PL.paused ? 0 : dt);   // DROs run clockwise
       { const q = OGEO.orbitXY(b, OR.ang[k]); OR.dot[k].obj.position.set(q[0], -q[1], 1); } OR.dot[k].on = true;
-      const T = TAU / b.n, col = hex([OC.s1, OC.s2, OC.moon][k]);
+      const T = b.prim === 'M' ? OGEO.droPeriod(b.r) : TAU / b.n, col = hex([OC.s1, OC.s2, OC.moon][k]);   // (a DRO: its three-body period)
       if (k === 2) return;                                          // the Moon: orbit ring only, no label
       const px = pc[k].x_mm, py = pc[k].y_mm;   // label beside the piece, preferably outward from the body it orbits
       tagBeside(OR.tag[k], `<span style="color:${col}">SELDON-${k + 1}</span> &nbsp;${b.prim === 'M' ? 'DRO · ' : ''}${kmTxt(b.r - b.B.R)} · ${fmtT(T)} period`, px, py, px - b.B.cx || 1, py - b.B.cy, OR.slot[k]);   // user, Oct 12: no 'up'; 'period'
@@ -1445,33 +1597,89 @@ export function createModes(ctx) {
 
   // ================================================================ LEO TO GEO / LEO TO DRO (modes 'geo' and 'dro')
   // The orbits view's drawing and maths, one job each. geo: Earth alone; a Seldon within a generous band of the GEO ring locks
-  // onto it. dro: Earth, the Moon and one Seldon; anywhere near the Moon (inside its zone, which is not drawn) is the DRO.
+  // onto it. dro: Earth, the Moon and one Seldon; anywhere near the Moon (inside its zone, which is not drawn) is the DRO, else
+  // near the GEO ring GEO (the same band as geo's), near LEO LEO, and anywhere else it is on one of the DRO route's passes (an ellipse
+  // toward the Moon through the piece, orbits-geo.js onPass; owner, Oct 26), but right behind Earth, where it is in a circular orbit.
   // The transfer is drawn from where the Seldon is to GEO / the DRO. Scale 'true' (setScale): Earth and the Moon at true relative
   // size at fixed spots, their pieces ignored; only the Seldons move.
   Object.assign(STYLES, { oBody: { c: C.fog200, w: 1.2, op: .9 } });
-  const GD = { geoBand: 40, leoBand: 25, peerBand: 25, droKm: V.DRO_KM, was: [false, false], wasLeo: [false, false], peer: -1 };   // bands: mm of ring distance (LEO, GEO, the other Seldon's orbit)   // geoBand: mm of ring distance; droKm: size of the DRO drawn
+  const GD = { geoBand: 40, leoBand: 25, peerBand: 25, droKm: V.DRO_KM, was: [false, false], wasLeo: [false, false], wasG: [false, false], wasNear: [false, false], peer: -1 };   // bands: mm of ring distance (LEO, GEO, the other Seldon's orbit); droKm: size of the DRO drawn; wasNear: on a pass by the Moon last frame (onPass's hysteresis)
+  // the bands are for the full LEO-GEO gap (190 mm in LEO TO GEO, always: no zoom since Oct 26; 114 in LEO TO DRO) and shrink with it
+  // (a close Moon squeezes LEO TO DRO's; Oct 25, zoomed out, everything from LEO to GEO read as one or the other); true scale: the gap
+  // from a Seldon touching Earth to the GEO ring (~65 mm).
+  // LOCK_CAP: a locked ring is never drawn farther than this from the piece's centre, so it stays under the base (lockGeo)
+  const LOCK_CAP = SELDON_BASE_R - 3;
+  const bandScale = (maps, geo) => { const E = maps.E, ts = E.rho0 != null, V0 = ts ? OGEO.GEO_VIEW : OGEO.DRO_VIEW;
+    return geo && !ts ? 1 : Math.min(1, (E.rho(OGEO.R_GEO) - (ts ? E.rho0 : E.rho(OGEO.R_LEO))) / (V0.geoMm - V0.leoMm)); };
   let scaleMode = 'show';
   const fixedEM = () => ({ earth: { x_mm: 150, y_mm: SH() / 2 }, moon: { x_mm: SW() - 190, y_mm: SH() / 2 } });   // room for GEO left of Earth, the DRO right of the Moon, and the "True scale" label at the end
-  // geo / dro share the rails language with capture and competitor: mint = our path, white = the target, fog dashed = references
-  Object.assign(STYLES, { gOur: { c: C.mint, w: 1.8, op: .6 }, gRoute: { c: C.mint, w: 2.7, op: 1, grad: true }, gRouteA: { c: C.mint, w: 2.7, op: 1 }, gRouteC: { c: C.mint, w: 1.8, op: .55, dash: 1.2, gap: 3.5 } });
-  OR.trG = { et: mkLine('orbits', 'gRoute'), etA: mkLine('orbits', 'gRouteA'), etC: mkLine('orbits', 'gRouteC'), key: null };   // the same transfer state as OR.tr, drawn our way
-  const GX = { ring: [mkLine('orbits', 'gOur'), mkLine('orbits', 'target')], dot: [mkDot('orbits', C.mint, 2.2, 1), mkDot('orbits', C.white, 2.2, 1)],
-    tag: [mkText('orbits', 'mt-label'), mkText('orbits', 'mt-label')], foot: [mkText('orbits', 'mt-foot', 1), mkText('orbits', 'mt-foot', 1)] };
+  // geo / dro share the rails language with capture and competitor: white = the target, fog dashed = references; the route in its
+  // engine colours (below). The Seldons' own orbits (owner, Oct 27: "Make seldon 2 orbit red and seldon 1 orbit blue"): Seldon-1 blue
+  // (OC.s1), Seldon-2 red (STYLES orbitB's), their riding dots the same
+  // (gOur .72, was .6: tuned when every vertex blended twice; Oct 25, the same brightness once a line blends once (demo.html line()))
+  // The route (owner, Oct 26): electric dashed purple, chemical dashed red (the old orbits view's OC.et / OC.gt), over every orbit
+  // line (STYLES path: Z_PATH); dashes 8 mm on, 5 off (~22 / 13 px on the TV at 2.7 px/mm, dashed from a metre away). They stay put
+  // as it draws out: it grows from its start, where computeLineDistances counts from. Arrowheads solid, in the same colour.
+  Object.assign(STYLES, { gOur: { c: OC.s1, w: 1.8, op: .72 }, gS2: { c: STYLES.orbitB.c, w: 1.8, op: .72 },
+    gET: { c: OC.et, w: 2.7, op: 1, grad: true, dash: 8, gap: 5, path: true }, gGT: { c: OC.gt, w: 2.7, op: 1, grad: true, dash: 8, gap: 5, path: true },
+    gETA: { c: OC.et, w: 2.7, op: 1, path: true }, gGTA: { c: OC.gt, w: 2.7, op: 1, path: true } });
+  OR.trG = { et: mkLine('orbits', 'gET'), gt: mkLine('orbits', 'gGT'), etA: mkLine('orbits', 'gETA'), gtA: mkLine('orbits', 'gGTA'), key: null };   // the same transfer state as OR.tr, drawn our way (updRoute)
+  OR.trG.et.obj.position.z = OR.trG.etA.obj.position.z = Z_PATH + .01;   // electric over chemical: where the DRO profile's passes share their periapsis, the outer (later) loops read whole
+  const trGAll = () => [OR.trG.et, OR.trG.gt, OR.trG.etA, OR.trG.gtA];
+  const GRAD_A0 = .4;                                            // the route's tail strength while it draws out (its head is 1); even once drawn (updRoute)
+  const GX = { ring: [mkLine('orbits', 'gOur'), mkLine('orbits', 'gS2')], dot: [mkDot('orbits', OC.s1, 2.2, 1), mkDot('orbits', STYLES.orbitB.c, 2.2, 1)],
+    tag: [mkText('orbits', 'mt-label'), mkText('orbits', 'mt-label')], foot: [mkText('orbits', 'mt-foot', 1), mkText('orbits', 'mt-foot', 1)], droSlot: { deg: null },
+    tgt: mkLine('orbits', 'target'), dro: mkLine('orbits', 'oRef'), droL: mkText('orbits', 'mt-tag dim') };   // tgt: the orbit the path is for (white; Seldon-2 keeps its own ring); dro, droL: the DRO as a reference while the path goes to GEO (dro)
   OR.msg = mkText('orbits', 'mt-tag'); OR.ts = mkText('orbits', 'mt-tag dim');
   OR.disc = [mkDot('orbits', 0x244b63, 1, 1), mkDot('orbits', C.fog300, 1, .9)];
   OR.discL = [mkLine('orbits', 'oBody'), mkLine('orbits', 'oBody')]; OR.discT = [mkText('orbits', 'mt-tag dim'), mkText('orbits', 'mt-tag dim')];
-  const gdOnly = () => [OR.msg, OR.ts, ...OR.disc, ...OR.discL, ...OR.discT, ...GX.ring, ...GX.dot, ...GX.tag, ...GX.foot];   // (updTransfer keeps OR.trG itself)
+  // the reach view (show.reach from the phone, Oct 26: "show the importance of having high delta v"; then "gradient based - and separate
+  // reach maps for chemical and electric"): for the engine picked there ('et' our electric, 'gt' a chemical one on the same tank), every
+  // circular Earth orbit one full tank gets Seldon-1 to from where it is, shaded by what it costs: strongest at its own orbit, fading out
+  // to nothing at the tank's edge (orbits-geo.js reachCost), with a faint ring at each whole km/s (labelled, the sides taking turns) and the
+  // edge dashed and named (none where it can escape: it fills the table). Under everything (z -.6).
+  Object.assign(STYLES, { rET: { c: OC.et, w: 1.4, op: .85, dash: 4, gap: 4 }, rGT: { c: OC.gt, w: 1.4, op: .85, dash: 4, gap: 4 }, rETi: { c: OC.et, w: 1, op: .45 }, rGTi: { c: OC.gt, w: 1, op: .45 } });
+  // the shade is one fixed disc about Earth; a shader takes each pixel's strength from a 256-step table of cost by radius (uR: the band's
+  // inner and outer radius, mm), so a moving piece only refills the table (Oct 26: rebuilding a 15,000-vertex ring mesh every frame,
+  // 12 ms a frame, spikes to 100 ms, was "SUPER laggy")
+  const RX_LUT = new THREE.DataTexture(new Uint8Array(256 * 4), 256, 1); RX_LUT.minFilter = RX_LUT.magFilter = THREE.LinearFilter; RX_LUT.needsUpdate = true;
+  const RX = { grad: (() => { const m = new THREE.Mesh(new THREE.CircleGeometry(4000, 96), new THREE.ShaderMaterial({ transparent: true, depthWrite: false,
+      uniforms: { uOpacity: { value: 0 }, uCol: { value: new THREE.Color() }, uLut: { value: RX_LUT }, uR: { value: new THREE.Vector2(0, 1) } },
+      vertexShader: 'varying vec2 vP; void main() { vP = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }',
+      fragmentShader: 'uniform float uOpacity; uniform vec3 uCol; uniform sampler2D uLut; uniform vec2 uR; varying vec2 vP; void main() { float t = (length(vP) - uR.x) / (uR.y - uR.x); if (t < 0. || t > 1.) discard; gl_FragColor = vec4(uCol, texture2D(uLut, vec2(t, .5)).r * uOpacity); }' }));
+      m.position.z = -.6; m.visible = false; scene.add(m); return add('orbits', 'mesh', m, 1); })(),
+    hi: { et: mkLine('orbits', 'rET'), gt: mkLine('orbits', 'rGT') }, lo: { et: mkLine('orbits', 'rET'), gt: mkLine('orbits', 'rGT') }, lbl: [mkText('orbits', 'mt-tag'), mkText('orbits', 'mt-tag')],
+    iso: Array.from({ length: 12 }, () => ({ et: mkLine('orbits', 'rETi'), gt: mkLine('orbits', 'rGTi'), lbl: mkText('orbits', 'mt-tag dim') })) };
+  const rxAll = () => [RX.grad, ...['et', 'gt'].flatMap(k => [RX.hi[k], RX.lo[k]]), ...RX.lbl, ...RX.iso.flatMap(q => [q.et, q.gt, q.lbl])];
+  const RX_A = [.3, .03];                                         // the shade's strength at its own orbit and at the tank's edge
+  let reachK = 'off', RV = null, ispKey = null;   // ispKey: the Isp the paths were last priced with (LEO TO GEO: the phone's; LEO TO DRO: our figures)   // RV: the presenter's Isp and tank for the reach view (show.isp / show.tank; null: vehicle.js's)
+  // the gradient's table: the strength at 256 radii from the band's inner edge (a0) to rho1, from each orbit's cost (refilled only when
+  // Earth, the band or Seldon-1's orbit moves by a quarter mm: camera jitter does not refill it)
+  const q4 = v => Math.round(v * 4) / 4;
+  function setGrad(it, maps, r0, R, k, rho1) {
+    const Em = maps.E, a0 = Em.rho(R.lo), key = [Em.cx, Em.cy, a0, rho1, Em.rho(r0)].map(q4).join() + k + R.dv.toFixed(4), u = it.obj.material.uniforms;
+    if (it.key !== key) {
+      it.key = key; const d = RX_LUT.image.data;
+      for (let i = 0; i < 256; i++) { const f = Math.min(1, OGEO.reachCost(r0, Em.r(a0 + (rho1 - a0) * i / 255), k) / R.dv); d[i * 4] = Math.round(255 * (f >= 1 ? 0 : RX_A[1] + (RX_A[0] - RX_A[1]) * (1 - f) ** 1.5)); }
+      RX_LUT.needsUpdate = true; u.uR.value.set(a0, rho1); u.uCol.value.set(OC[k]);
+    }
+    it.obj.position.set(Em.cx, -Em.cy, -.6); it.on = true;
+  }
+  const gdOnly = () => [OR.msg, OR.ts, ...OR.disc, ...OR.discL, ...OR.discT, ...GX.ring, ...GX.dot, ...GX.tag, ...GX.foot, GX.tgt, GX.dro, GX.droL, ...rxAll()];   // (updTransfer keeps OR.trG itself)
   const trItems = () => ['gt', 'et', 'gtF', 'etF', 'gtA', 'etA', 'gtC', 'etC', 'read'].map(k => OR.tr[k]);   // (updTransfer keeps these itself)
-  const orAll = () => [...OR.ring, ...OR.dot, ...OR.tag, OR.soi, OR.leo, OR.leoL, OR.geo, OR.geoL, OR.foot, ...Object.values(OR.z), ...gdOnly()];
+  const orAll = () => [...OR.ring, ...OR.dot, ...OR.tag, OR.soi, OR.leo, OR.leoL, OR.leoL2, OR.geo, OR.geoL, OR.geoL2, OR.foot, ...Object.values(OR.z), ...gdOnly()];
   function updGD(P, dt, mode) {
     const geo = mode === 'geo', TS = scaleMode === 'true', FX = fixedEM(), EYE = MODE_TITLES[MODE_NAMES.indexOf(mode)];
     hide(...orAll(), ...trItems()); OR.tr.key = null; tagRects = [];   // (the old orbits view redraws its paths when it comes back)
     TAG_TOP = TAG_BOT = MARG + RAIL_H + 16; TAG_FLIP = true;       // labels stay between the rails (and their "Not to scale." lines) and face the nearest long edge
+    if (TY.rails === 'near') { TAG_TOP = MARG + 8; TAG_FLIP = false; }   // one rail: everything reads from the near edge
     const E = TS ? FX.earth : P.earth, Mo = TS ? FX.moon : geo ? null : P.moon;
     const ids = ['seldon-1', 'seldon-2'].filter(id => P[id]).slice(0, geo ? 2 : 1);   // dro: one Seldon (Seldon-1 if both are seen)
-    const msg = !E || (!geo && !Mo) ? msgFor(E, Mo, !geo) : !ids.length ? 'Place Seldon-1.' : '';
-    if (!E || (!geo && !Mo)) { setRails(mode, { eyebrow: EYE, msg }); hide(OR.trG.et, OR.trG.etA, OR.trG.etC); OR.tr.xk = OR.tr.key = OR.trG.xk = OR.trG.key = null; return; }
+    const msg = !E || (!geo && !Mo) || !ids.length ? 'wait' : '';   // (nothing to draw yet: the rails stay empty, no "Place ..." text; owner, Oct 27)
+    if (!E || (!geo && !Mo)) { setRails(mode, { eyebrow: EYE, msg: '' }); hide(...trGAll()); OR.tr.xk = OR.tr.key = OR.trG.xk = OR.trG.key = null; return; }
     const e = [E.x_mm, E.y_mm], maps = TS ? OGEO.makeTrueMaps(e, [Mo.x_mm, Mo.y_mm], { noZone: geo, foot: TRUE_FOOT }) : geo ? OGEO.makeGeoMaps(e, geoView()) : OGEO.makeMaps(e, [Mo.x_mm, Mo.y_mm], DRO_SCALE);
+    if (maps.near || (!geo && maps.M.rho(GD.droKm) < MOON_PIECE_R + 12)) { setRails(mode, { eyebrow: EYE, msg: 'Move the Moon further from Earth.' }); hide(...trGAll()); OR.tr.xk = OR.tr.key = OR.trG.xk = OR.trG.key = null; return; }   // its zone would reach GEO (orbits-geo.js DRO_VIEW), or the DRO would be drawn at the Moon piece's rim (Oct 25: under ~285 mm apart for 36,000 km)
+    maps.room = { x0: MARG + 16, y0: TY.rails === 'near' ? MARG + 4 : MARG + RAIL_H + 4, x1: SW() - MARG - 16, y1: SH() - MARG - RAIL_H - 4 };   // the table between the rails (and clear of the "Not to scale." lines at its ends, Oct 26: a high start's periapsis ran over them): the DRO profile's loops keep to it (orbits-geo.js hybrid)
     pieceObs = ids.map(id => ({ x: P[id].x_mm, y: P[id].y_mm, r: PIECE_R[id] + TAG_GAP }));
     if (TS) {   // Earth and the Moon drawn at true relative size (the 3D stand-ins are hidden by the page)
       [[E, R_E, 0, 'EARTH'], [Mo, R_M, 1, 'MOON']].forEach(([c, R, i, name]) => {
@@ -1481,74 +1689,186 @@ export function createModes(ctx) {
         tagAt(OR.discT[i], name, c.x_mm, c.y_mm + r + 10, 8);
       });
     } else { pieceObs.push({ x: E.x_mm, y: E.y_mm, r: PIECE_R.earth + TAG_GAP }); if (Mo) pieceObs.push({ x: Mo.x_mm, y: Mo.y_mm, r: PIECE_R.moon + TAG_GAP }); }
+    const PT = OR.trG.show && OR.trG.key && OR.trG.P; pathObs = PT ? PT.line : [];   // (last frame's path) tags keep off its lines where they can, and
+    if (PT) pieceObs.push(...PT.obs);   // ring labels and tags off the arrowhead and the path's run along the ring it ends on (Oct 25)
     // bodies: the Seldons' orbits, snapped to GEO / the DRO inside the lock band (hysteresis kept per Seldon)
-    const kOf = id => id === 'seldon-2' ? 1 : 0;
+    // (dro: inside the Moon zone the DRO, else a Seldon on the GEO ring is in GEO, whatever the target (owner, Oct 26: "it doesn't
+    // snap to geo any more"), with its own hysteresis; GEO picked, it then has nowhere to go: Oct 25, it drew a lap; then LEO, then a pass)
+    const kOf = id => id === 'seldon-2' ? 1 : 0, bs = bandScale(maps, geo), pick = PATHS[mode]?.includes(pathTo) ? pathTo : 'off';
     const bodies = ids.map(id => {
       const p = P[id], k = kOf(id), raw = OGEO.bodyAt(maps, p.x_mm, p.y_mm);
-      const b = geo ? OGEO.lockGeo(maps, raw, GD.was[k], GD.geoBand) : OGEO.lockDro(maps, p.x_mm, p.y_mm, raw, GD.was[k], GD.droKm);
+      let b = geo ? OGEO.lockGeo(maps, raw, GD.was[k], GD.geoBand * bs, LOCK_CAP) : OGEO.lockDro(maps, p.x_mm, p.y_mm, raw, GD.was[k], GD.droKm);
       GD.was[k] = !!b.locked;
-      if (!b.locked) { const l = OGEO.lockLeo(maps, b, GD.wasLeo[k], GD.leoBand); GD.wasLeo[k] = !!l.leo; return l; }
-      GD.wasLeo[k] = false; return b;
+      GD.wasG[k] = false;   // (LEO TO DRO no longer snaps to GEO, owner Oct 26: "in DRO mode do not lock to GEO"; LEO TO GEO's lock is lockGeo above)
+      if (!b.locked) { const l = OGEO.lockLeo(maps, b, GD.wasLeo[k], GD.leoBand * bs, LOCK_CAP); GD.wasLeo[k] = !!l.leo; if (geo) return l; const o = OGEO.onPass(maps, l, GD.droKm, GD.wasNear[k]); GD.wasNear[k] = !!o.ell?.near; return o; }   // dro: anywhere else it is on one of the route's passes (owner, Oct 26: "just presume our orbit is already elliptical"; orbits-geo.js onPass; circular behind Earth)
+      GD.wasLeo[k] = GD.wasNear[k] = false; return b;
     });
-    for (const k of [0, 1]) if (!ids.some(id => kOf(id) === k)) GD.was[k] = GD.wasLeo[k] = false;
+    for (const k of [0, 1]) if (!ids.some(id => kOf(id) === k)) GD.was[k] = GD.wasLeo[k] = GD.wasG[k] = GD.wasNear[k] = false;
+    const nm = id => TY.sans ? id[0].toUpperCase() + id.slice(1) : id.toUpperCase();   // 'Seldon-1' (sans, mixed case) or 'SELDON-1'
     // the other Seldon's orbit locks too (geo): one placed near it joins that orbit exactly (the one being moved joins the
     // other; Seldon-2 joins Seldon-1 when neither moves), with the same hysteresis as GEO. Two on one orbit = a phasing story.
     if (geo && bodies.length === 2 && bodies.every(x => x.prim === 'E')) {
       const mv = ids.map(id => !!P[id].moving), j = mv[0] && !mv[1] ? 0 : mv[1] && !mv[0] ? 1 : GD.peer >= 0 ? GD.peer : 1;
-      const A = bodies[1 - j], J = bodies[j], band = GD.peerBand * (GD.peer === j ? 1.15 : 1);   // (a short release: two orbits 30 mm apart are two orbits)
+      const A = bodies[1 - j], J = bodies[j], band = GD.peer === j ? Math.min(GD.peerBand * bs * 1.15, LOCK_CAP) : Math.min(GD.peerBand * bs, LOCK_CAP * .85);   // (a short release: two orbits 30 mm apart are two orbits; the snap below the cap, as lockGeo's, so there is always some)
       if (!J.locked && !J.leo && Math.abs(J.rho - A.rho) < band) { bodies[j] = { ...J, r: A.r, rho: A.rho, n: A.n, peer: true }; GD.peer = j; }
       else GD.peer = -1;
     } else GD.peer = -1;
     // reference rings (fog, dashed)
-    refRing(OR.geo, OR.geoL, maps, OGEO.R_GEO, 'GEO');                       // LEO and GEO in both modes (LEO TO DRO too, Oct 13)
-    if (maps.E.rho(OGEO.R_GEO) - maps.E.rho(OGEO.R_LEO) >= LEO_GAP) refRing(OR.leo, OR.leoL, maps, OGEO.R_LEO, 'LEO'); else hide(OR.leo, OR.leoL);
-    // the way on: from the first Seldon to the second (geo) or to GEO / the DRO (nothing if it is there already)
-    const a = bodies[0]; let b = bodies[1], to = null;
-    if (a && !b && !a.locked) { b = OGEO.targetBody(maps, a, geo ? 'E' : 'M', geo ? OGEO.R_GEO : GD.droKm); to = geo ? 'GEO' : 'DRO'; }
-    const toName = to || (b && b.locked ? (geo ? 'GEO' : 'DRO') : ids[1] && ids[1].toUpperCase());
+    refRing(OR.geo, [OR.geoL, OR.geoL2], maps, OGEO.R_GEO, 'GEO');            // LEO and GEO in both modes (LEO TO DRO too, Oct 13), labelled for both sides
+    if (maps.E.rho(OGEO.R_GEO) - maps.E.rho(OGEO.R_LEO) >= LEO_GAP) refRing(OR.leo, [OR.leoL, OR.leoL2], maps, OGEO.R_LEO, 'LEO'); else hide(OR.leo, OR.leoL, OR.leoL2);
+    // the way on, picked on the phone (show.path, Oct 25): from the first Seldon to GEO or Seldon-2's orbit (geo), the DRO or GEO (dro).
+    // Path off, or a Seldon-2 not on the table: the numbers only, for Seldon-2 if it is there (geo), else GEO / the DRO. Nothing if it is there already.
+    // From the DRO to GEO (dro): the numbers only (the mirrored trip's loops out of GEO ran off the table, through the far rail; Oct 25);
+    // from a pass to GEO the same (Oct 26: its ellipse is the DRO route's; a climb drawn off it would be a second route over the first).
+    const a = bodies[0], s2 = bodies[1];
+    const tg = pick === 'off' || (pick === 'seldon-2' && !s2) ? (geo ? (s2 ? 'seldon-2' : 'geo') : 'dro') : pick;
+    // LEO TO DRO (owner, Oct 27: "designed for moving the satellite from LEO to DRO basically left to right ... undrawing the path as it
+    // crosses"): the mission's route is drawn from LEO (anc: opposite the Moon, at the first burn, wherever the piece is: it never moves
+    // with it; owner, Oct 27: "stability matters here") and stays put while the piece is moved out along it; the loops it has clearly
+    // passed are undrawn (updRoute, OR.trG.prog) and the rails give what is left from where it is (NX below)
+    let anc = a;
+    if (!geo && a) { const rl = maps.E.rho(OGEO.R_LEO); anc = { prim: 'E', B: maps.E, rho: rl, th: maps.thM + Math.PI, r: OGEO.R_LEO, n: Math.sqrt(OGEO.MU_E / OGEO.R_LEO ** 3), dir: maps.E.dir ?? 1, leo: true }; }
+    let b = null, to = null;
+    if (a && tg === 'seldon-2') b = s2;
+    else if (a && tg === 'geo' && !(a.locked && a.prim === 'E')) { b = OGEO.targetBody(maps, a, 'E', OGEO.R_GEO); to = 'GEO'; }
+    else if (a && tg === 'dro') { b = OGEO.targetBody(maps, anc, 'M', GD.droKm); to = 'DRO'; }   // (in the DRO already: the route all undrawn, the rails "IN THE DRO")
+    const toName = to || (b && b.locked ? 'GEO' : ids[1] && nm(ids[1]));
+    if (OR.trG.tg !== tg || OR.trG.mode !== mode) redraw();       // a new target (a mode switch that keeps GEO, Seldon-2 back on the table): drawn out again
+    Object.assign(OR.trG, { show: pick !== 'off' && tg === pick && !(a?.prim === 'M' && tg === 'geo') && !(a?.ell && tg === 'geo'), tg, mode, to: b, from: a });   // (to, tg, from: testState; from a pass to GEO, the numbers only: orbits-geo.js transfer)
     footNote(GX.foot, TS ? 'True scale.' : 'Not to scale.');
-    updTransfer(maps, a, b, dt, ids.some(id => P[id].moving) || (!TS && !!(P.earth?.moving || (!geo && P.moon?.moving))), null, mode);
-    // orbit rings and the dots riding them (one lap of the fastest Seldon in ORB_LAP seconds): ours mint, the target white
-    const moonB = !geo && maps.M && OGEO.moonBody(maps), nmax = Math.max(...bodies.map(x => x.n), moonB ? moonB.n : 0), rate = TAU / (nmax * ORB_LAP);
+    { const want = geo ? RV?.isp ?? null : null, k = JSON.stringify(want); if (k !== ispKey) { ispKey = k; OGEO.setIsp(want); OR.tr.xk = OR.trG.xk = null; } }   // (a change reprices at once: FUEL follows the slider)
+    const s1m = ids.some(id => P[id].moving);
+    OR.trG.prog = !geo && a ? { x: P[ids[0]].x_mm, y: P[ids[0]].y_mm, st: a.locked ? 'done' : a.leo ? 'start' : 'on' } : null;
+    updTransfer(maps, anc, b, dt, s1m || (!TS && !!(P.earth?.moving || (!geo && P.moon?.moving))), null, mode);
+    if (!OR.trG.show) hide(...trGAll());                          // the path only when the presenter shows it (the numbers are worked out either way)
+    // the numbers: the route's, or (LEO TO DRO, out of LEO) what is left of the mission from where Seldon-1 is (none in the DRO)
+    const NX = OR.trG.NX = a && anc !== a && !a.leo ? (a.locked ? null : leftFrom(maps, a, b, s1m)) : OR.trG.X;   // (in LEO: the whole mission)
+    // orbit rings and the dots riding them (one lap of the fastest Seldon in ORB_LAP seconds): ours mint, the target white. On a pass
+    // its lap is no quicker than DOT_V mm/s on average round the ring (review, Oct 26: a 2.3 m pass in 8 s crossed periapsis 40 mm a frame)
+    const moonB = !geo && maps.M && OGEO.moonBody(maps), nmax = Math.max(...bodies.map(x => x.n), moonB ? moonB.n : 0), rate = TAU / (nmax * ORB_LAP), DOT_V = 150;
     const ride = (k, x, ring, dot) => {
-      setPts(ring, OGEO.orbitPts(x, 256).map(p => W(p[0], p[1])));
-      if (OR.last[k] === null || Math.abs(wrapPi(x.th - OR.last[k])) > 1e-3) OR.ang[k] = x.th;   // the piece moved (or was reset): the dot restarts from it
-      OR.last[k] = x.th; OR.ang[k] += x.dir * x.n * rate * (PL.paused ? 0 : dt);
-      if ((OR.seekN ||= [])[k] !== PL.n) { OR.seekN[k] = PL.n; if (PL.f != null) OR.ang[k] = x.th + x.dir * x.n * rate * PL.f * TR_DRAW_S; }   // the dot where the drawn transfer has got to
+      const pts = OGEO.orbitPts(x, 256); setPts(ring, pts.map(p => W(p[0], p[1])));
+      let w = x.dir * x.n * rate;
+      if (x.ell) { let L = 0; for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); w *= Math.min(1, TAU / Math.abs(w) * DOT_V / L); }
+      const th0 = x.ell ? x.ell.m0 : x.th;   // (on a pass: its mean anomaly, which orbitXY turns into a Kepler-like pace, fastest at periapsis)
+      if (OR.last[k] === null || Math.abs(wrapPi(th0 - OR.last[k])) > 1e-3) OR.ang[k] = th0;   // the piece moved (or was reset): the dot restarts from it
+      OR.last[k] = th0; OR.ang[k] += w * (PL.paused ? 0 : dt);
+      if ((OR.seekN ||= [])[k] !== PL.n) { OR.seekN[k] = PL.n; if (PL.f != null) OR.ang[k] = th0 + w * PL.f * TR_DRAW_S; }   // the dot where the drawn transfer has got to
       const q = OGEO.orbitXY(x, OR.ang[k]); dot.obj.position.set(q[0], -q[1], 1); dot.on = true;
+      return pts;
     };
     if (moonB) ride(2, moonB, OR.ring[2], OR.dot[2]); else OR.last[2] = null;
+    const et = NX && gdRoute(NX);   // (the presenter's engine, our electric one unless GT is picked; the DRO: its own profile)
+    const heroOf = dv => [mps(dv), 'm/s ' + DV];
+    GX.ring[1].dim = to === 'GEO' && OR.trG.show ? .4 : 1;            // geo, GEO picked: Seldon-2's own ring steps back, so one white ring reads as where we're going
     bodies.forEach((x, k) => {
-      ride(k, x, GX.ring[k], GX.dot[k]);
-      const T = TAU / x.n, p = P[ids[k]], col = k ? '#f6f8f8' : '#0ee3a6', where = x.locked ? (geo ? 'GEO' : 'DRO') + (geo ? '' : ' · ' + kmTxt(x.r - x.B.R)) : x.leo ? 'LEO' : kmTxt(x.r - x.B.R) + (x.peer ? ' · SAME ORBIT' : '');
-      tagBeside(GX.tag[k], `<span style="color:${col}">${ids[k].toUpperCase()}</span> &nbsp;${where} · ${fmtT(T)} period`, p.x_mm, p.y_mm, p.x_mm - x.B.cx || 1, p.y_mm - x.B.cy, OR.slot[k], 8.6);
+      const pts = ride(k, x, GX.ring[k], GX.dot[k]); if (!geo && k === 0) { hide(GX.ring[0]); if (!x.locked) hide(GX.dot[0]); }   // (LEO TO DRO: no green orbit for Seldon-1, the mission route is its path; owner, Oct 26. In the DRO it is locked: its dot rides the DRO, which stays; Oct 27)
+      // a DRO reads its radius, as the rail does (Oct 25: the tag gave its altitude), and its three-body period (Kepler's is 20% long)
+      const T = x.prim === 'M' ? OGEO.droPeriod(x.r) : TAU / x.n, p = P[ids[k]], where = x.locked ? (x.prim === 'E' ? 'GEO' : 'DRO · ' + kmTxt(x.r)) : x.leo ? 'LEO' : x.ell ? `${TY.sans ? 'apogee' : 'APOGEE'} ${kmTxt(Math.round((x.ell.Q - x.B.R) / 1000) * 1000)}` : kmTxt(x.r - x.B.R) + (x.peer ? (TY.sans ? ' · same orbit' : ' · SAME ORBIT') : '');   // (on a pass: its apogee's altitude to 1,000 km, no period: short)
+      const call = TY.callout && k === 0 && a && b && et && !msg, it = GX.tag[k];
+      if (it.call !== !!call) { it.call = !!call; it.obj.classList.toggle('call', !!call); }
+      let html = `${where}${TY.short || x.ell ? '' : ` · ${fmtT(T)} period`}`;   // (no name: which Seldon is implicit, the label is by its piece; owner, Oct 27)
+      if (call) { const [v, u] = heroOf(et.dv); html = `<div class="c-h">${html} &nbsp;→&nbsp; ${toName}</div><div class="c-v">${v}<i>${u}</i></div><div class="c-m">${Math.round(et.mp)}<i>kg fuel</i> &nbsp;·&nbsp; ${fmtT(et.t)}</div>`; }
+      const po = pathObs; if (x.ell) { pathObs = pathObs.slice(); for (let i = 0, c = -Infinity, s = 0; i < pts.length; i++) { if (i) s += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); if (s - c >= 8) { c = s; pathObs.push({ x: pts[i][0], y: pts[i][1], r: 3 }); } } }   // (a pass's tag keeps off its own ring too, where it can: review, Oct 26)
+      tagBeside(it, html, p.x_mm, p.y_mm, p.x_mm - x.B.cx || 1, p.y_mm - x.B.cy, OR.slot[k], 8.6); pathObs = po;
     });
     for (let k = bodies.length; k < 2; k++) OR.last[k] = null;
-    if (a && b && to) {   // the orbit it is heading for (white); the DRO is labelled where it is farthest from Earth
-      setPts(GX.ring[1], OGEO.orbitPts(b, 256).map(p => W(p[0], p[1])));
-      if (to === 'DRO') { const q = maps.M.xy(b.rho, maps.thM); tagAt(GX.tag[1], `<span style="color:#f6f8f8">DRO</span>`, q[0], q[1], 8); }
+    if (a && b && to) {   // the orbit it is heading for (white); the DRO is labelled on it, where it is farthest from Earth if that is clear (there already: it stays, Seldon-1 locked on it)
+      setPts(GX.tgt, OGEO.orbitPts(b, 256).map(p => W(p[0], p[1])));
+      if (to === 'DRO') tagOnRing(GX.tag[1], `<span style="color:#f6f8f8">DRO</span>`, maps.M, b.rho, maps.thM, GX.droSlot);
     }
-    // rails: hero = DELTA-V of our electric transfer, then FUEL, TIME and where it ends
-    const X = OR.trG.X, et = X && X.et;
-    if (msg) setRails(mode, { eyebrow: EYE, msg });
+    if (!geo && a && a.prim === 'E' && to !== 'DRO') {   // dro, the path to GEO: the DRO stays, as a reference (fog, dashed; a whole number of dashes round it)
+      const d = OGEO.targetBody(maps, a, 'M', GD.droKm), pts = OGEO.orbitPts(d, 256), per = GX.dro.st.dash + GX.dro.st.gap;
+      const L = pts.reduce((s, p, i) => i ? s + Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) : 0, 0);
+      setPts(GX.dro, pts.map(p => W(p[0], p[1]))); GX.dro.obj.material.dashScale = Math.max(1, Math.round(L / per)) * per / L;
+      tagOnRing(GX.droL, 'DRO', maps.M, d.rho, maps.thM, GX.droSlot);
+    }
+    // the reach view: from Seldon-1's orbit (on a pass, the circular orbit of the same energy; in the DRO, none: the rails as usual)
+    const ew = k => `<span style="color:${hex(OC[k])}">${k === 'gt' ? 'chemical' : 'electric'}</span>`;
+    const r0 = a && (a.ell ? (a.ell.rpK + a.ell.Q) / 2 : a.r), RK = geo && reachK !== 'off' && a && a.prim === 'E' ? reachK : null,   /* (no reach in LEO TO DRO, owner Oct 27) */ RE = OR.rx = RK ? OGEO.reach(r0, GD.droKm, geo ? RV : null) : null;   // (OR.rx: testState)
+    if (RE) {
+      const R = RE[RK], far = 2 * Math.hypot(SW(), SH()), name = `<span style="color:${hex(OC[RK])}">${RK === 'gt' ? 'Chemical' : 'Electric'} reach · ${mps(R.dv)} m/s</span>`;
+      setGrad(RX.grad, maps, r0, R, RK, R.hi === Infinity ? far : maps.E.rho(R.hi));
+      const snap = r => maps.E.r(q4(maps.E.rho(r)));                       // (the rings on a quarter-mm grid: camera jitter does not rebuild them)
+      if (R.hi !== Infinity) refRing(RX.hi[RK], RX.lbl, maps, snap(R.hi), name);   // (escaping: no edge, it fills the table)
+      if (R.lo > OGEO.R_LEO + 1) refRing(RX.lo[RK], [], maps, snap(R.lo), '');    // (it can't get down to LEO: its inner edge too)
+      // the rings at each 1,000 m/s from its own orbit, outward (where the cost rises all the way: inside the band, below the chemical
+      // peak) and inward to the band's inner edge (even slots out, odd in). Owner, Oct 27: "reach is kind of glitchy when seldon 1 is far
+      // from earth on ET": out there the outward ones were all off the table, a flat wash; and they blinked off whenever Seldon-1 moved
+      // (a dragged piece, or camera jitter): they stay now
+      const cost = r => OGEO.reachCost(r0, r, RK), top = Math.min(R.hi, RK === 'gt' ? 11.94 * r0 : Infinity, maps.E.r(far / 2)), floor = Math.max(R.lo, OGEO.R_LEO);   // (chemical: its cost rises out to 11.94 r0, orbits-geo.js reach)
+      for (let i = 0; i < RX.iso.length; i++) {
+        const v = (i >> 1) + 1, end = i & 1 ? floor : top, q = RX.iso[i]; if (v >= R.dv - .15 || cost(end) < v) continue;
+        let lo = r0, hi = end; for (let j = 0; j < 50; j++) { const m = (lo + hi) / 2; if (cost(m) < v) lo = m; else hi = m; }   // (lo: the side where it costs less)
+        refRing(q[RK], [], maps, snap(lo), '');
+        const rho = q4(maps.E.rho(lo));   // (labels: the sides take turns, the other side where its own is taken)
+        for (const bot of (i >> 1) % 2 ? [true, false] : [false, true]) { const y = maps.E.cy + (bot ? rho : -rho), x = maps.E.cx;
+          if (y > TAG_TOP + 8 && y < SH() - TAG_BOT - 4 && offPieces(x, y, 40, 10)) { tagAt(q.lbl, `${mps(v)} m/s`, x, y, 6.5, bot ? 0 : 180); break; } }
+      }
+    }
+    // rails (owner, Oct 27). LEO TO GEO: the path is there to show how long the trip takes, as the reach view's gradient shows how far a
+    // tank gets, so hero = the TIME to the target, then the engine's ISP (named in its colour: the rails are the route's legend), the
+    // route's cumulative DELTA-V, FUEL and where it ends. LEO TO DRO, a mission: hero = the cumulative DELTA-V, what the trip has used
+    // getting Seldon-1 to where it is (0 in LEO, the whole mission's in the DRO), then the TIME TO DRO from there, the FUEL used and its
+    // altitude now. LEO TO GEO with no path shown: the title only. The reach view: hero = the tank's DELTA-V for the engine picked, then
+    // that engine's ISP and the tank
+    // (owner, Oct 27: "remove the reaches and same tank numbers and only show ISP when either path or reach is on as well as engine selected")
+    const ispOf = k => [`<span style="color:${hex(OC[k])}">${k === 'gt' ? 'CHEMICAL' : 'ELECTRIC'}</span> ISP`, `${Math.round(k === RK && RE ? RE.isp[k] : OGEO.PROP_MODES[k === 'gt' ? 1 : 0].isp).toLocaleString('en-US')}<i>s</i>`];
+    if (RE && !msg && TY.rails !== 'title') {   // the reach view: hero = its engine's tank, then that engine's ISP and the tank
+      setRails(mode, { eyebrow: '', hero: mps(RE[RK].dv), unit: `m/s ${DV} · ${ew(RK)}`, mets: [ispOf(RK), ['TANK', `${Math.round(RE.tank)}<i>kg</i>`]] });
+    } else if (msg) setRails(mode, { eyebrow: EYE, msg: '' });
+    else if (TY.rails === 'title') setRails(mode, { eyebrow: EYE });   // the numbers are next to the piece
+    else if (!geo && a && b && (et || a.locked) && OR.trG.X) {   // LEO TO DRO: the mission so far (the route's numbers less what is left from the piece)
+      const F = gdRoute(OR.trG.X), L = a.locked ? null : et, used = k => Math.max(0, F[k] - (L ? L[k] : 0));
+      setRails(mode, { eyebrow: '', hero: mps(used('dv')), unit: `m/s cumulative ${DV}`,
+        mets: [L ? ['TIME TO DRO', fmtT(L.t)] : ['STATUS', 'IN THE DRO'], ['FUEL USED', `${Math.round(used('mp'))}<i>kg</i>`], a.locked ? ['DRO RADIUS', kmTxt(a.r)] : ['ALTITUDE', kmTxt(a.r - a.B.R)]] });
+    } else if (geo && !OR.trG.show) setRails(mode, { eyebrow: '', hero: '', unit: '' });   // LEO TO GEO, path and reach off: no trip, so no numbers, and no title either (owner, Oct 27: "remove the leo to geo text")
     else if (a && b && et) {
-      const dv = et.dv, alt = b.prim === 'M' ? ['DRO RADIUS', kmTxt(b.r)] : ['ALTITUDE', kmTxt(b.r - b.B.R)];
-      setRails(mode, { eyebrow: `${EYE} · ${ids[0].toUpperCase()} TO ${toName}`, hero: dv < 1 ? String(Math.round(dv * 1000)) : num(dv), unit: dv < 1 ? 'm/s delta-v' : 'km/s delta-v',
-        mets: [['FUEL', `${Math.round(et.mp)}<i>kg</i>`], ['TIME', fmtT(et.t)], alt] });
-    } else setRails(mode, { eyebrow: `${EYE} · ${ids[0].toUpperCase()}`, hero: '0', unit: 'km/s delta-v', mets: [['STATUS', geo ? 'IN GEO' : 'IN THE DRO']] });
+      const [tv, tu] = fmtTp(et.t), alt = b.prim === 'M' ? ['DRO RADIUS', kmTxt(b.r)] : ['ALTITUDE', kmTxt(b.r - b.B.R)];
+      const eng = et.kind === 'hy' ? [] : [ispOf(et.kind)];   // (ISP: the phone's, the FUEL it needs follows)
+      // (owner, Oct 27: "don't say days to seldon-2 or days to GEO just says days to target")
+      setRails(mode, { eyebrow: '', hero: tv, unit: `${tu} to target`, mets: [...eng, [`CUMULATIVE ${DV}`, `${mps(et.dv)}<i>m/s</i>`], ['FUEL', `${Math.round(et.mp)}<i>kg</i>`], alt] });
+    } else setRails(mode, { eyebrow: '', hero: '0', unit: 'm/s ' + DV, mets: [['STATUS', tg === 'seldon-2' ? 'SAME ORBIT' : tg === 'geo' ? 'IN GEO' : 'IN THE DRO']] });
   }
-  // the presenter's zoom (show.zoom): the map's scale about Earth in LEO TO GEO, CAPTURE / DEFEND and COMPETITOR (LEO TO DRO is
-  // set by where Earth and the Moon stand; true scale is true). LEO never closer than 60 mm (the Earth piece + a Seldon's base).
+  // the presenter's zoom (show.zoom): the map's scale about Earth in CAPTURE / DEFEND and COMPETITOR (set aside; live.py still takes
+  // it). LEO TO GEO has one scale, GEO_VIEW (owner, Oct 26: the phone's slider only reached 1.14x, it is gone; a zoom saved in
+  // show.json no longer sticks); LEO TO DRO is set by where Earth and the Moon stand; true scale is true.
   let zoom = 1;
-  const geoView = () => ({ leoMm: Math.min(Math.max(60, OGEO.GEO_VIEW.leoMm * zoom), OGEO.GEO_VIEW.geoMm * zoom - 40), geoMm: OGEO.GEO_VIEW.geoMm * zoom });
-  function setZoom(z) { z = Math.max(.5, Math.min(2, +z || 1)); if (z === zoom) return; zoom = z; CGEO.setZoom(z); OR.tr.xk = OR.trG.xk = null; CP.key = KP.key = null; CP.S = KP.S = null; }
+  // the transfer path (geo, dro): off unless the presenter picks a target on the phone (show.path, Oct 25), for the engine picked
+  // there (show.engine: our electric ET, or a chemical GT); the DRO always the mission's profile, chemical then electric (orbits-geo.js
+  // hybrid; Oct 26), whatever the engine. It draws out from the start each time either changes
+  const PATHS = { geo: ['geo', 'seldon-2'], dro: ['dro'] };   // the targets each mode draws (live.py SHOW_PATHS keeps the show state to these; LEO TO DRO: the mission)
+  let pathTo = 'off', engine = 'et';
+  const redraw = () => Object.assign(OR.trG, { draw: 0, still: 0, key: null, full: false });
+  function setPath(p) { p = ['geo', 'seldon-2', 'dro'].includes(p) ? p : 'off'; if (p !== pathTo && p !== 'off') redraw(); pathTo = p; }
+  function setEngine(e) { e = e === 'gt' ? 'gt' : 'et'; if (e !== engine && OR.trG.tg !== 'dro') redraw(); engine = e; }   // (the DRO's route is the same either way)
+  function setVehicle(o) { const n = v => typeof v === 'number' && isFinite(v) && v > 0 ? v : null, isp = o?.isp || {};   // the presenter's Isp (per engine: the paths' fuel and the reach view) and tank (the reach view)
+    RV = { isp: { et: n(isp.et) ?? V.SELDON.isp, gt: n(isp.gt) ?? V.TUG.isp }, tank: n(o?.tank) ?? V.SELDON.prop }; ispKey = null; }   // (updGD prices with it)
+  function setReach(v) { reachK = v === true ? 'et' : ['et', 'gt'].includes(v) ? v : 'off'; }   // the reach view (show.reach: 'off' / 'et' / 'gt'; true, the first version's: electric), geo and dro
+  // test hook (testState.gd): where the route starts (fromR km; fromLock 'GEO' / 'DRO' / 'LEO' / null; on a pass fromApo, its apoapsis km, and fromOff, its ring's mm off the piece), the target the numbers are for, the built path (its tip's distance off the target's ring, mm; length; its points;
+  // the engine of each run) and its numbers (engine: 'et' / 'gt', or 'hy' for the DRO's profile, with its chem / elec parts)
+  // (LEO TO DRO: dv, mp, t, chem, elec are what the rails give, what is left from Seldon-1; full, the route's own; cut, mm of it undrawn)
+  const gdTest = () => { const T = OR.trG, P = T.key && T.P, b = T.to, tip = P && P.pts[P.pts.length - 1], NX = T.NX === undefined ? T.X : T.NX, r = NX && gdRoute(NX), rf = T.X && gdRoute(T.X);
+    const f = T.from; return { path: pathTo, engine: rf ? rf.kind : engine, target: T.tg, cut: P && T.cut != null ? T.cut - P.cum[P.runs[0].i0] : 0, cutTo: P && T.want != null ? T.want - P.cum[P.runs[0].i0] : 0, loops: P?.loops?.map(l => l.A), loopN: T.loopN, rlen: P ? P.cum[P.cum.length - 1] - P.cum[P.runs[0].i0] : 0, full: rf && { dv: rf.dv, mp: rf.mp, t: rf.t, chem: rf.chem }, fromR: f?.r, fromLock: f?.locked ? (f.prim === 'E' ? 'GEO' : 'DRO') : f?.leo ? 'LEO' : null, fromApo: f?.ell?.Q, fromOff: f?.ell?.off, show: !!T.show, prim: b?.prim, toR: b?.r, tip, dRho: tip && b ? b.B.inv(tip[0], tip[1]).rho - b.rho : null, len: P ? P.cum[P.cum.length - 1] : 0, n: P ? P.pts.length : 0, pts: P?.pts, runs: P?.runs.map(q => q.k), dv: r?.dv, mp: r?.mp, t: r?.t, chem: r?.chem, elec: r?.elec }; };
+  // the route drawn and priced (geo, dro): the DRO's profile when the DRO is the target, else the presenter's engine (kind: 'hy' / 'et' / 'gt')
+  const gdRoute = X => OR.trG.tg === 'dro' && X.hy ? { ...X.hy, kind: 'hy' } : { ...X[engine], kind: engine };
+  // LEO TO DRO out of LEO: what is left of the mission from where Seldon-1 is (the numbers only: the route drawn is the mission's, from
+  // LEO, updGD), at most 20 a second while it moves (~5 ms each)
+  const LF = { k: null, X: null, t: 0 };
+  function leftFrom(maps, a, b, moving) {
+    const k = [maps.E.cx, maps.E.cy, maps.M?.cx, maps.M?.cy, a.rho, a.th, a.ell?.Q, b.r, maps.room?.y0, maps.room?.y1].map(v => (v ?? 0).toFixed(3)).join() + ispKey;
+    if (LF.k !== k && !(moving && LF.X && performance.now() - LF.t < 50)) { LF.k = k; LF.t = performance.now(); LF.X = OGEO.transfer(maps, a, b); }
+    return LF.X;
+  }
+  const geoView = () => OGEO.GEO_VIEW;                           // LEO 100 mm, clear of a Seldon touching Earth; GEO 500 mm, past the long edges
+  function setZoom(z) { z = Math.max(.5, Math.min(2, +z || 1)); if (z === zoom) return; zoom = z; CGEO.setZoom(z); OR.tr.xk = null; CP.key = KP.key = null; CP.S = KP.S = null; }
   function setScale(s) { scaleMode = s === 'true' ? 'true' : 'show'; OR.tr.xk = OR.trG.xk = null; }
   function setOptsOrbits(m, o = {}) {
     const num = (v, lo, hi) => Math.max(lo, Math.min(hi, +v));
     if (m === 'geo' && o.band_mm != null) GD.geoBand = num(o.band_mm, 10, 120);
     if (m === 'geo' && o.peer_mm != null) GD.peerBand = num(o.peer_mm, 0, 80);
     if (m === 'geo' && o.leo_mm != null) GD.leoBand = num(o.leo_mm, 0, 80);
-    if (m === 'dro' && o.dro_km != null) GD.droKm = num(o.dro_km, 5000, 60000);
+    if (m === 'dro' && o.dro_km != null) GD.droKm = num(o.dro_km, 20000, 60000);   // (Oct 25: was 5,000; below ~6,000 km the DRO is drawn under the Moon piece)
     OR.tr.xk = OR.trG.xk = null;
   }
   function reset() { OR.last = [null, null, null]; for (const T of [OR.tr, OR.trG]) Object.assign(T, { draw: 0, still: 0, key: null }); }   // dots restart from their pieces, the transfer is drawn out again
@@ -1571,7 +1891,7 @@ export function createModes(ctx) {
       if (use('earth')) out.earth = { x_mm: e.x_mm, y_mm: e.y_mm, seen_ago: 0 };
       if (use('moon')) out.moon = null;                          // the Moon is not part of this mode
       if (use('s1')) out['seldon-1'] = at(maps.E, standAt(maps, OGEO.R_LEO) + (TS ? 4 : 0), 60);
-      if (use('s2')) out['seldon-2'] = at(maps.E, standAt(maps, OGEO.R_GEO) - 22, 200);   // a little inside the GEO ring: locks onto it
+      if (use('s2')) out['seldon-2'] = at(maps.E, maps.E.rho(OGEO.R_GEO) - (TS ? 4 : 22 * bandScale(maps, true)), 200);   // a little inside the GEO ring: locks onto it (true scale: on its own distance, lockGeo)
     } else {
       const L = OGEO.LAYOUT, e = given.includes('earth') ? pc.earth : { x_mm: TS ? fixedEM().earth.x_mm : L.earth[0], y_mm: TS ? fixedEM().earth.y_mm : L.earth[1] };
       const m = given.includes('moon') ? pc.moon : { x_mm: TS ? fixedEM().moon.x_mm : L.moon[0], y_mm: TS ? fixedEM().moon.y_mm : L.moon[1] };
@@ -1592,14 +1912,14 @@ export function createModes(ctx) {
     const u = x => html ? U(x) : ' ' + x;
     return s < 5400 ? `${Math.round(s / 60)}${u("min")}` : s < 172800 ? `${(s / 3600).toFixed(s < 36000 ? 1 : 0)}${u('h')}` : `${s < 20 * 86400 ? (s / 86400).toFixed(1) : Math.round(s / 86400)}${u('d')}`;
   };
-  const fmtDvh = dv => dv < 1 ? `${Math.round(dv * 1000)}${U('m/s')}` : `${num(dv)}${U('km/s')}`;
+  const fmtDvh = dv => `${mps(dv)}${U('m/s')}`;
   const fmtKm = x => `${Math.round(x).toLocaleString('en-US')}${U('km')}`;
   const cmmAt = (ex, ey, rho) => r => { const q = rho(Math.hypot(r[0], r[1])), a = Math.atan2(r[1], r[0]); return [ex + q * Math.cos(a), ey - q * Math.sin(a)]; };   // km (Earth frame) -> table mm
   // points along a craft's flight from t0 to t1; denser at both ends (the fast, tight part of a long ellipse is at its ends)
   const sampleC = (c, t0, t1, n, mm) => { const out = []; for (let i = 0; i <= n; i++) { const p = mm(CGEO.craftAt(c, t0 + (t1 - t0) * (1 - Math.cos(Math.PI * i / n)) / 2).r); out.push(W(p[0], p[1])); } return out; };
   const outward = (x, y, ex, ey, d) => { const l = Math.hypot(x - ex, y - ey) || 1; return [x + (x - ex) / l * d, y + (y - ey) / l * d]; };
-  function footNote(its, txt) {                                  // "Not to scale." on both long sides, just inside the rails
-    its.forEach((it, i) => { setText(it, txt); place(it, SW() / 2, i === 0 ? SH() - MARG - RAIL_H - 14 : MARG + RAIL_H + 3, 'c', i === 0 ? 0 : 180); });
+  function footNote(its, txt) {                                  // "Not to scale." at the left and right ends, centred
+    its.forEach((it, i) => { setText(it, txt); place(it, i === 0 ? MARG + 6 : SW() - MARG - 6, SH() / 2, 'cm', i === 0 ? 90 : -90); });   // at the short ends (Oct 25), reading along them
   }
   // film clock: returns animation progress u (0..1) and whether the pieces are settled
   function filmClock(F, key, moving, dt, lead, dur, hold) {
@@ -1645,7 +1965,7 @@ export function createModes(ctx) {
     const O = OPT.capture, E = P.earth, A = P['seldon-1'], B = P['seldon-2'];
     const defend = /defend/i.test(O.scenario);
     const EYE = `${defend ? 'DEFEND' : 'CAPTURE'} · SELDON-1 TO SELDON-2`;
-    if (!E || !A || !B) { hide(...CD_ALL); CP.key = null; setRails('capture', { eyebrow: EYE, msg: !E ? 'Place Earth.' : !A && !B ? 'Place both Seldons.' : !A ? 'Place Seldon-1.' : 'Place Seldon-2.' }); return; }
+    if (!E || !A || !B) { hide(...CD_ALL); CP.key = null; setRails('capture', { eyebrow: EYE, msg: '' }); return; }
     const ex = E.x_mm, ey = E.y_mm, rho = p => Math.max(CGEO.RHO.leo, Math.hypot(p.x_mm - ex, p.y_mm - ey));
     const d12 = Math.abs(rho(A) - rho(B));
     const same = O.path === 'phasing' || d12 < 3 || (O.path !== 'transfer' && d12 < 25);
@@ -1692,7 +2012,7 @@ export function createModes(ctx) {
     const tm = ['T+', `${fmtDur(tt)} <i>of</i> ${fmtDur(pl.Ttot)}`];
     const path = pl.same ? [['PHASING ORBIT', `${pl.dir === 'down' ? 'LOWER' : 'HIGHER'} <i>${pl.N} ${pl.N > 1 ? 'turns' : 'turn'}</i>`]] : [['TRANSFER', fmtDur(pl.tof)], ['WAIT FOR WINDOW', fmtDur(pl.tw)]];
     if (defend) setRails('capture', { eyebrow: EYE, hero: String(Math.round(pl.dvTg * 1000)), unit: 'm/s evade', mets: [['PHASE', lab], tm, ['CHASER DELTA-V', fmtDvh(pl.dvCh)], ['MISS DISTANCE', done ? fmtKm(pl.sepEnd) : '—']] });
-    else setRails('capture', { eyebrow: EYE, hero: pl.dvCh < 1 ? String(Math.round(pl.dvCh * 1000)) : num(pl.dvCh), unit: pl.dvCh < 1 ? 'm/s chaser delta-v' : 'km/s chaser delta-v', mets: [['PHASE', lab], tm, ...path] });
+    else setRails('capture', { eyebrow: EYE, hero: mps(pl.dvCh), unit: 'm/s chaser delta-v', mets: [['PHASE', lab], tm, ...path] });
   }
 
   // ---------------------------------------------------------------- COMPETITOR
@@ -1716,7 +2036,7 @@ export function createModes(ctx) {
 
   function updCompetitor(P, dt) {
     const O = OPT.competitor, E = P.earth, EYE = 'COMPETITOR · LEO TO ';
-    if (!E) { hide(...KD_ALL); KP.key = null; setRails('competitor', { eyebrow: EYE + 'TARGET', msg: 'Place Earth.' }); return; }
+    if (!E) { hide(...KD_ALL); KP.key = null; setRails('competitor', { eyebrow: EYE + 'TARGET', msg: '' }); return; }
     const ex = E.x_mm, ey = E.y_mm;
     // target orbit: a preset from the tablet, else the farther Seldon piece (distance from Earth), locking to GEO when near its ring
     const seld = ['seldon-1', 'seldon-2'].map(k => P[k]).filter(Boolean).sort((a, b) => Math.hypot(b.x_mm - ex, b.y_mm - ey) - Math.hypot(a.x_mm - ex, a.y_mm - ey));
@@ -1729,7 +2049,7 @@ export function createModes(ctx) {
     else if (pc) {
       const q = Math.hypot(pc.x_mm - ex, pc.y_mm - ey); rT = CGEO.rOfRho(q);
       if (Math.abs(q - CGEO.RHO.geo) < COMP.snapGeoMm) { rT = CGEO.R_GEO; preset = 'geo'; } else if (q >= CGEO.RHO.far - 4) { rT = CGEO.L_KM; preset = 'dro'; }
-    } else { hide(...KD_ALL); KP.key = null; setRails('competitor', { eyebrow: EYE + 'TARGET', msg: 'Place a Seldon to set the target orbit.' }); return; }
+    } else { hide(...KD_ALL); KP.key = null; setRails('competitor', { eyebrow: EYE + 'TARGET', msg: '' }); return; }
     rT = Math.max(rT, CGEO.R_LEO * 1.06);
     const moving = !!(E.moving || (pc && pc.moving));
     const key = [ex, ey, th0, rT].map(v => Math.round(v * (v > 1000 ? .01 : 1) / 2)).join(',') + [preset, O.speed].join();
@@ -1765,11 +2085,10 @@ export function createModes(ctx) {
     footNote(KD.foot, 'Not to scale.');
     // rails: hero = propellant saved, then each side's delta-v, propellant and trip time
     const saved = Math.round(cmp.saved), side = (nm, col, r) => `<div class="xf"><div class="eyebrow" style="color:${col}">${nm}</div><div class="xf-mets">`
-      + `<div class="metric"><div class="ml">DELTA-V</div><div class="mv">${num(r.dv)}<i>km/s</i></div></div>`
+      + `<div class="metric"><div class="ml">${DV}</div><div class="mv">${mps(r.dv)}<i>m/s</i></div></div>`
       + `<div class="metric"><div class="ml">PROPELLANT</div><div class="mv" style="font-size:calc(var(--mm) * 24)">${Math.round(r.prop)}<i>kg</i></div></div>`
       + `<div class="metric"><div class="ml">TRIP TIME</div><div class="mv">${fmtDur(r.time)}</div></div></div></div>`;
-    const dest = preset === 'geo' ? 'GEO' : preset === 'dro' ? 'DRO' : `${Math.round(rT - CGEO.R_E).toLocaleString('en-US')} KM`;
-    setRails('competitor', { raw: `<div class="r-left"><div class="eyebrow"><span class="sq"></span>${EYE}${dest}</div><div class="hero">${saved}<i>kg less propellant</i></div></div><div class="r-mid"></div>`
+    setRails('competitor', { raw: `<div class="r-left"><div class="hero">${saved}<i>kg less propellant</i></div></div><div class="r-mid"></div>`
       + `<div class="r-mets">${side(COMP.us.name, hexCss(C.mint), cmp.us)}${side(COMP.them.name, hexCss(COMP.colThem), cmp.them)}</div>` });
   }
 
@@ -1822,19 +2141,19 @@ export function createModes(ctx) {
       const act = topo, t = track(), yb = yForBudget(budgetS);
       b.line.base = act ? 1 : .5; b.ticks.forEach(g => g.base = act ? 1 : .5); b.tickL.forEach(g => g.base = act ? 1 : .5); b.lbl.base = 1;
       setPts(b.fill, [W(t.cx, yForBudget(0)), W(t.cx, yb)]); b.fill.on = act && budgetS > .02;
-      setText(b.read, `${budgetS.toFixed(1)}<i>km/s</i>`); place(b.read, t.cx + (END === 'right' ? -1 : 1) * (BOX / 2 + 20), yb, 'cm', boxRot); b.read.on = act;
+      setText(b.read, `${mps(Math.round(budgetS * 10) / 10)}<i>m/s</i>`); place(b.read, t.cx + (END === 'right' ? -1 : 1) * (BOX / 2 + 20), yb, 'cm', boxRot); b.read.on = act;
       if (b.lbl.act !== act) { b.lbl.act = act; b.lbl.obj.classList.toggle('on', act); }
       if (current === 'engage' || grp() === 'orbits' || current === 'capture' || current === 'competitor') hide(b.line, ...b.ticks, ...b.tickL, b.fill, b.lbl, b.read);   // the map's budget slider is not part of this mode
     });
     updFloor(P, dt, nowMs);
     for (const l of flows) l.material.dashOffset = -3 * nowMs / 1000;   // dashes travel toward increasing point index at 3 mm/s
     railOwner = current;
-    rails.forEach(r => { r.on = current !== 'orbits'; });   // only the old orbits view has no edge rails
-    { const d = current === 'orbits' ? 'none' : ''; if (lockEl.style.display !== d) lockEl.style.display = d; }   // nor the company lockup
+    rails.forEach((r, i) => { r.on = current !== 'orbits' && !(i === 1 && TY.rails === 'near'); });   // only the old orbits view has no edge rails ('near': one rail)
+    if (lockEl.style.display !== 'none') lockEl.style.display = 'none';   // no company lockup on the table (Oct 25)
     for (const m of MODE_NAMES) {
       if (GROUP[m]) continue;
       const g = groups[m], target = m === grp() ? 1 : 0;
-      g.fade += (target > g.fade ? 1 : -1) * Math.min(.1, dt) / .4;
+      g.fade += Math.sign(target - g.fade) * Math.min(.1, dt) / .4;   // (sign: at the target it stays; it used to step off 1 and back every other frame)
       g.fade = Math.max(0, Math.min(1, g.fade));
       if (g.fade > .003) updFns[m](P, dt, nowMs);
     }
@@ -1859,9 +2178,10 @@ export function createModes(ctx) {
     for (const k of Object.keys(placerKeys)) placerKeys[k] = null;
   }
   applyFonts();
-  return { update, setMode, onLayout, setOpts, reset: () => { reset(); resetFilm(); }, setPlay: on => { PL.paused = !on; }, seek: f => { PL.f = Math.max(0, Math.min(1, +f || 0)); PL.n++; }, get paused() { return PL.paused; },
-    get testState() { return { capture: CP.clk, competitor: KP.clk, geoDraw: OR.trG.draw, geoAng: OR.ang[0], rho: { ...CGEO.RHO }, geoView: geoView(), lead: { capture: CAP_LEAD, competitor: CMP_LEAD }, speed: { capture: OPT.capture.speed, competitor: OPT.competitor.speed } }; }, /* test hook (tools/test_control.py): film clocks (s), the drawn-out transfer (0..1), the dot angle */ get mode() { return current; }, boxRect, setTopo: v => { topo = !!v; }, get topo() { return topo; },
-    setBudget: v => { budget = Math.max(0, Math.min(DV_MAX, +v)); }, get budget() { return budget; }, trackY: yForBudget, DV_MAX, engChips, get viewZoom() { return current === 'engage' ? (ENG.zoomNow ?? 1) : 1; }, get scale() { return scaleMode; }, setZoom, get zoom() { return zoom; }, get trueScale() { return scaleMode === 'true' && (current === 'geo' || current === 'dro'); },   /* true scale exists in LEO TO GEO / LEO TO DRO only; elsewhere the pieces stay live */ setScale, gdDemo, get orbitsLike() { return grp() === 'orbits' || current === 'capture' || current === 'competitor'; }, get drawsBodies() { return scaleMode === 'true' && (current === 'geo' || current === 'dro'); },
+  setType(TYPES[ctx.type] ? ctx.type : 'orbitron');   // the table's type: Orbitron (chosen Oct 25); ?type= tries the others
+  return { update, setMode, onLayout, setOpts, setType, get type() { return tyName; }, types: Object.fromEntries(Object.entries(TYPES).map(([k, t]) => [k, t.label])), reset: () => { reset(); resetFilm(); }, setPlay: on => { PL.paused = !on; }, seek: f => { PL.f = Math.max(0, Math.min(1, +f || 0)); PL.n++; }, get paused() { return PL.paused; },
+    get testState() { return { capture: CP.clk, competitor: KP.clk, geoDraw: OR.trG.draw, pathShown: trGAll().some(it => it.on), colors: trGAll().filter(it => it.on).map(it => it.st.c), dash: trGAll().filter(it => it.on).map(it => [it.st.dash, it.st.gap, it.obj.material.dashScale]), layer: { path: Math.min(...trGAll().map(it => it.obj.position.z)), orbit: Math.max(...[...GX.ring, GX.tgt, GX.dro, OR.leo, OR.geo, ...OR.ring, ...OR.discL].map(it => it.obj.position.z)), dot: Math.min(...[...GX.dot, ...OR.dot].map(it => it.obj.position.z)) }, gd: gdTest(), reach: { on: reachK, shown: RX.grad.on, et: OR.rx?.et, gt: OR.rx?.gt, lbl: RX.lbl.some(it => it.on), edge: ['et', 'gt'].filter(k => RX.hi[k].on), iso: RX.iso.filter(q => q.et.on || q.gt.on).length }, geoAng: OR.ang[0], rho: { ...CGEO.RHO }, geoView: geoView(), s1Ring: !!GX.ring[0].on, s1Dot: !!GX.dot[0].on, droRing: !!GX.tgt.on, s1Tag: (GX.tag[0].html || '').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' '), lead: { capture: CAP_LEAD, competitor: CMP_LEAD }, speed: { capture: OPT.capture.speed, competitor: OPT.competitor.speed } }; }, /* test hook (tools/test_control.py): film clocks (s), the drawn-out transfer (0..1), its lines' colours and dashes, the layers' z, the dot angle */ get mode() { return current; }, boxRect, setTopo: v => { topo = !!v; }, get topo() { return topo; },
+    setBudget: v => { budget = Math.max(0, Math.min(DV_MAX, +v)); }, get budget() { return budget; }, trackY: yForBudget, DV_MAX, engChips, get viewZoom() { return current === 'engage' ? (ENG.zoomNow ?? 1) : 1; }, get scale() { return scaleMode; }, setZoom, get zoom() { return zoom; }, setPath, setReach, setVehicle, get reach() { return reachK; }, get path() { return pathTo; }, setEngine, get engine() { return engine; }, paths: PATHS, get trueScale() { return scaleMode === 'true' && (current === 'geo' || current === 'dro'); },   /* true scale exists in LEO TO GEO / LEO TO DRO only; elsewhere the pieces stay live */ setScale, gdDemo, get orbitsLike() { return grp() === 'orbits' || current === 'capture' || current === 'competitor'; }, get drawsBodies() { return scaleMode === 'true' && (current === 'geo' || current === 'dro'); },
     titles: Object.fromEntries(MODE_NAMES.map((m, i) => [m, MODE_TITLES[i]])), get handMode() { return current === 'engage' || (current === 'orbits' && OR.zoomOn); }, orbitsDemo: (pc, noMoon) => orbitsDemo(pc, noMoon),
     get trueBodies() { return OR.trueB || []; },   // true scale: the drawn Earth and Moon {x, y, r} in mm (the page keeps its Seldon stand-ins clear of them)
     orbitsFigures: () => ({ earth: OGEO.FIG.E, moon: OGEO.FIG.M, seldon: OGEO.FIG.S }),

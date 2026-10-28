@@ -29,6 +29,7 @@ import cv2
 import numpy as np
 
 from colorcheck import ROLES as COLOUR_ROLES, colour_scores
+from model_worker import plain
 from tracker import Tracker as PieceTracker   # the live tracker (rules: tracker.py); Tracker below is the earlier one (replay.py compares)
 
 HERE = Path(__file__).parent
@@ -241,7 +242,7 @@ class Tracker:
 # the Tracker constants above, the detector's confidence threshold, and the pages' easing time (sent in /events).
 TRACKER_KNOBS = ('SMOOTH', 'BAND_MOVING_MM', 'BAND_STILL_MM', 'STILL_S', 'REST_MM',      # tracker.py
                  'GATE_MM', 'VMAX_MM_S', 'ROLE_PENALTY_MM', 'CONF_NEW', 'CONFIRM_FRAMES', 'RELOCATE_S', 'EDGE_MM', 'LEAVE_S', 'HOLD_S',
-                 'UNLOCK_FRAMES', 'UNLOCK_S', 'HAND_NEAR_MM', 'HAND_PUSH_MM', 'HAND_PUSH_S', 'HAND_PUSH_FRAMES', 'HAND_HOLD_MM', 'HAND_RELOC_S', 'CARRY_HOLD_S', 'PARTIAL_FRAC', 'OCCLUDE_FRAC',
+                 'UNLOCK_FRAMES', 'UNLOCK_S', 'HAND_NEAR_MM', 'HAND_PUSH_MM', 'HAND_PUSH_S', 'HAND_PUSH_FRAMES', 'HAND_HOLD_MM', 'HAND_RELOC_S', 'CARRY_HOLD_S', 'SETTLE_MM', 'SETTLE_S', 'PARTIAL_FRAC', 'OCCLUDE_FRAC',
                  'HAND_CAND_MM')
 PAGE_TAU_S = 0.47        # (tuned on the table, Oct 13) demo.html eases each still piece toward the feed with this time constant...
 PAGE_TAU_MOVE_S = 0.58   # (Oct 13) ...and a moving one with this (tune.html, Oct 9)
@@ -276,16 +277,27 @@ def marker_png(mid, px=600):
 
 
 def make_detector():
-    return cv2.aruco.ArucoDetector(cv2.aruco.getPredefinedDictionary(ARUCO_DICT), cv2.aruco.DetectorParameters())
+    # tuned for the screen as the camera sees it with the pieces' exposure: dim, low contrast, rolling-shutter banding (Oct 25:
+    # the defaults found 2 of the 5 markers in a frame, these on a CLAHE'd frame 4)
+    p = cv2.aruco.DetectorParameters()
+    p.adaptiveThreshWinSizeMin, p.adaptiveThreshWinSizeMax, p.adaptiveThreshWinSizeStep = 3, 53, 4
+    p.minMarkerPerimeterRate, p.polygonalApproxAccuracyRate, p.errorCorrectionRate = .02, .06, .9
+    return cv2.aruco.ArucoDetector(cv2.aruco.getPredefinedDictionary(ARUCO_DICT), p)
+
+
+CLAHE = cv2.createCLAHE(3.0, (8, 8))
 
 
 def detect_markers(detector, img):
     """-> {id: 4x2 float array of corners TL,TR,BR,BL in camera px}"""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
-    corners, ids, _ = detector.detectMarkers(gray)
-    if ids is None:
-        return {}
-    return {int(i): c.reshape(4, 2) for i, c in zip(ids.flatten(), corners)}
+    out = {}
+    for g in (gray, CLAHE.apply(gray)):                 # as seen, then contrast-stretched locally (finds the dim ones)
+        corners, ids, _ = detector.detectMarkers(g)
+        if ids is not None:
+            for i, c in zip(ids.flatten(), corners):
+                out.setdefault(int(i), c.reshape(4, 2))
+    return out
 
 
 def marker_corners_mm(m):
@@ -343,72 +355,87 @@ def corner_calibration(corners, bezel, screen_mm):
     return cv2.getPerspectiveTransform(np.float32(corners).reshape(4, 2), mm)
 
 
-# Quick recalibration from four small white squares stuck on the TV bezel's corners (the screen itself is behind the
-# polarising film, so on-screen codes can't be seen). squares.json holds where they are in screen mm, learned once from a
-# good calibration; a recalibration finds each one near where the current calibration puts it, in several frames, and fits
-# the camera -> screen mapping to the four. The squares are ~5 px: only small blobs near the expected spot count.
+# Quick recalibration from the four small squares stuck on the TV bezel's corners (yellow since Oct 25; made for when the
+# screen was behind a polarising film the camera couldn't see through). squares.json holds where they are in screen mm, learned once
+# from a good calibration. A recalibration looks for each square near where the current calibration puts it and fits the
+# camera -> screen mapping to them: all four -> a full perspective fit; three (one in glare or covered) -> the old mapping
+# moved, turned, scaled and sheared to fit them. For small drift only: the phone's Recalibrate uses the on-screen markers
+# (/calibrate), which handle any move. (A whole-frame search by the squares' shape was tried Oct 25: with only two squares
+# bright enough it matched random spots, so it is not used.) Colour is not used either: under the table's light the camera's
+# white balance drifts, and the yellow squares can read greenish-white.
 SQUARES_JSON = HERE / 'squares.json'
-SQ_SEARCH_PX = 25        # look this far (camera px at 1280 wide) around where each square should be
-SQ_MAX_MOVE_PX = 60      # refuse a result that moves the screen's corners more than this (a square mistaken for something)
+SQ_SEARCH_PX = 25        # near search: this far (camera px at 1280 wide) around where each square should be
+SQ_MAX_MOVE_PX = 60      # near search: refuse a result that moves the screen's corners more than this (a square mistaken)
 TV_BEZEL_MM = {'side': 13.46, 'top': 13.46, 'bottom': 18.70}   # learn: the squares sit near the TV body's corners
 
 
+def bright_spots(gray, x0=0, y0=0):
+    """Small blobs brighter than their own surroundings -> [(x, y, strength)], intensity-weighted centres, px."""
+    top = gray.astype(np.float32) - cv2.medianBlur(gray, 15).astype(np.float32)
+    n, lab, st, _ = cv2.connectedComponentsWithStats((top >= 25).astype(np.uint8))
+    out = []
+    for k in range(1, n):
+        if not 2 <= st[k, cv2.CC_STAT_AREA] <= 150:
+            continue
+        sl = (slice(st[k, 1], st[k, 1] + st[k, 3]), slice(st[k, 0], st[k, 0] + st[k, 2]))
+        ys, xs = np.nonzero(lab[sl] == k); wt = top[sl][ys, xs]
+        out.append((x0 + st[k, 0] + (xs * wt).sum() / wt.sum(), y0 + st[k, 1] + (ys * wt).sum() / wt.sum(), float(wt.max())))
+    return out
+
+
 def find_square(gray, u, v, r=SQ_SEARCH_PX):
-    """The white square nearest camera px (u, v): a small blob brighter than its own surroundings -> (x, y) px or None."""
+    """The square nearest camera px (u, v): a small blob brighter than its own surroundings -> (x, y) px or None."""
     h, w = gray.shape
     x0, y0, x1, y1 = max(0, int(u) - r), max(0, int(v) - r), min(w, int(u) + r + 1), min(h, int(v) + r + 1)
     if x1 - x0 < 5 or y1 - y0 < 5:
         return None
-    win = gray[y0:y1, x0:x1]
-    top = win.astype(np.float32) - cv2.medianBlur(win, 15).astype(np.float32)   # bright detail on its background
-    thr = max(25.0, 0.5 * float(top.max()))
-    n, lab, st, _ = cv2.connectedComponentsWithStats((top >= thr).astype(np.uint8))
-    best, bd = None, np.inf
-    for k in range(1, n):
-        if not 2 <= st[k, cv2.CC_STAT_AREA] <= 150:
-            continue
-        ys, xs = np.nonzero(lab == k)
-        wt = top[ys, xs]
-        cx, cy = x0 + (xs * wt).sum() / wt.sum(), y0 + (ys * wt).sum() / wt.sum()
-        d = np.hypot(cx - u, cy - v)
-        if d < bd:
-            best, bd = (float(cx), float(cy)), d
-    return best
+    spots = bright_spots(gray[y0:y1, x0:x1], x0, y0)
+    return min(((float(x), float(y)) for x, y, _ in spots), key=lambda p: np.hypot(p[0] - u, p[1] - v), default=None)
 
 
 def square_calibration(frames, H, screen_mm, learn=False):
     """frames: a few camera frames; H: the current calibration. learn: find the squares near the TV body's corners and save
-    where they are (screen mm); else recalibrate from them. -> (H, info) or raises ValueError (naming the square)."""
+    where they are (screen mm); else recalibrate from the ones seen near where they were (at least three).
+    -> (H, info) or raises ValueError (saying what was not found)."""
     W, Hh = screen_mm
     Hi = np.linalg.inv(H)
-    cam = lambda x, y: (lambda p: (p[0] / p[2], p[1] / p[2]))(Hi @ [x, y, 1])
+    proj = lambda M, x, y: (lambda p: (p[0] / p[2], p[1] / p[2]))(M @ [x, y, 1])
     names = ['top-left', 'top-right', 'bottom-right', 'bottom-left']
     if learn:
         sd, tp, bt = TV_BEZEL_MM['side'], TV_BEZEL_MM['top'], TV_BEZEL_MM['bottom']
         guess_mm = [(-sd, -tp), (W + sd, -tp), (W + sd, Hh + bt), (-sd, Hh + bt)]
+    elif not SQUARES_JSON.exists():
+        raise ValueError('no squares.json yet: learn the squares once from a good calibration')
     else:
-        if not SQUARES_JSON.exists():
-            raise ValueError('no squares.json yet: learn the squares once from a good calibration')
         guess_mm = json.loads(SQUARES_JSON.read_text())['squares_mm']
     grays = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames]
-    px = []
-    for name, (x, y) in zip(names, guess_mm):
-        u, v = cam(x, y)
+    ref = [proj(Hi, x, y) for x, y in guess_mm]                      # where the squares are, if nothing moved
+    need = max(2, len(grays) // 3)
+    found = {}
+    for i, (u, v) in enumerate(ref):
         hits = [h for h in (find_square(g, u, v) for g in grays) if h is not None]
-        if len(hits) < max(2, len(grays) // 3):
-            raise ValueError(f'{name} white square not found (seen in {len(hits)} of {len(grays)} frames)')
-        px.append(tuple(np.median(np.float32(hits), axis=0)))
+        if len(hits) >= need:
+            found[i] = tuple(np.median(np.float32(hits), axis=0))
+    missing = [names[k] for k in range(4) if k not in found]
     if learn:
-        sq = [tuple(float(c) for c in (lambda p: (p[0] / p[2], p[1] / p[2]))(H @ [u, v, 1])) for u, v in px]
-        SQUARES_JSON.write_text(json.dumps({'squares_mm': sq, 'px': [list(map(float, p)) for p in px], 't': time.time()}))
+        if missing:
+            raise ValueError('learning needs all four squares; not found: ' + ', '.join(missing))
+        sq = [tuple(float(c) for c in proj(H, *found[i])) for i in range(4)]
+        SQUARES_JSON.write_text(json.dumps({'squares_mm': sq, 'px': [list(map(float, found[i])) for i in range(4)], 't': time.time()}))
         return H, {'learned': [[round(c, 1) for c in q] for q in sq]}
-    Hn = cv2.getPerspectiveTransform(np.float32(px), np.float32(guess_mm))
-    corners = [(0, 0), (W, 0), (W, Hh), (0, Hh)]
+    if len(found) < 3:
+        raise ValueError('found only ' + (', '.join(names[k] for k in found) or 'no squares') + '; not found: ' + ', '.join(missing))
+    ks = sorted(found)
+    if len(ks) == 4:
+        Hn = cv2.getPerspectiveTransform(np.float32([found[k] for k in ks]), np.float32([guess_mm[k] for k in ks]))
+    else:   # three: the old mapping moved, turned, scaled and sheared so they land where they are seen now
+        A = cv2.getAffineTransform(np.float32([ref[k] for k in ks]), np.float32([found[k] for k in ks]))
+        Hn = H @ np.linalg.inv(np.vstack([A, [0, 0, 1]]))
     Hni = np.linalg.inv(Hn)
-    moved = max(np.hypot(*(np.subtract(cam(x, y), (lambda p: (p[0] / p[2], p[1] / p[2]))(Hni @ [x, y, 1])))) for x, y in corners)
+    moved = max(np.hypot(*np.subtract(proj(Hi, x, y), proj(Hni, x, y))) for x, y in [(0, 0), (W, 0), (W, Hh), (0, Hh)])
     if moved > SQ_MAX_MOVE_PX:
         raise ValueError(f'the screen would move {moved:.0f} px: a square was probably mistaken (camera moved a lot? recalibrate by hand)')
-    return Hn, {'moved_px': round(float(moved), 1)}
+    return Hn, {'moved_px': round(float(moved), 1), 'squares': len(ks), 'not_seen': missing}
 
 
 def save_calib(H, screen_mm, path=None, frame_wh=None):
@@ -449,9 +476,12 @@ class CalibRequest:
 # The presenter's controls (presenter.html, or keys on the TV page): one object, broadcast in every /events message.
 # Kept in memory and in show.json (gitignored) so a restart of live.py keeps the mode. Contract: NIGHT-AGENTS.md.
 SHOW_JSON = HERE / 'show.json'
-SHOW_DEFAULT = {'mode': 'geo', 'scale': 'show', 'freeze': False, 'sky': 'still', 'reset': 0, 'mode_opts': {}, 'beat': 0, 'play': True, 't': None, 'zoom': 1.0}   # beat: run-of-show position (presenter.html only; the table ignores it). play: false = films and dots hold; t: scrub position 0..1 (null = none); zoom: map scale about Earth (ZOOM_RANGE)
+SHOW_DEFAULT = {'mode': 'geo', 'scale': 'show', 'freeze': False, 'sky': 'still', 'reset': 0, 'mode_opts': {}, 'beat': 0, 'play': True, 't': None, 'zoom': 1.0, 'calib': 0, 'path': 'off', 'engine': 'et', 'reach': 'off', 'isp': {'et': 1000, 'gt': 320}, 'tank': 325}   # isp, tank: the presenter's sliders for the reach view (s per engine, kg of propellant; vehicle.js's SELDON / TUG values to start; the dry mass stays vehicle.js's). reach: the reach view, for which engine ('off', 'et', 'gt': what one tank gets Seldon-1 to; LEO TO GEO / LEO TO DRO). path: the transfer path the table draws from Seldon-1 ('off' or a SHOW_PATHS target), engine: for which engine, ET (electric) or GT (chemical). calib: a counter; a bump makes the TV page run its on-screen marker calibration. beat: run-of-show position (presenter.html only; the table ignores it). play: false = films and dots hold; t: scrub position 0..1 (null = none); zoom: map scale about Earth (ZOOM_RANGE) for CAPTURE / COMPETITOR (set aside); still taken so old clients don't error, LEO TO GEO ignores it (Oct 26)
 ZOOM_RANGE = (0.5, 2.0)
-SHOW_CHOICES = {'mode': ('geo', 'capture', 'dro', 'competitor'), 'scale': ('show', 'true'), 'sky': ('still', 'slow', 'off')}
+ISP_RANGE = {'et': (300, 1000), 'gt': (150, 425)}   # s: the presenter's Isp slider per engine (LEO TO GEO's paths, the reach view): electric up to our figure (vehicle.js SELDON 1,000 s; owner, Oct 26), chemical to 425 s (owner, Oct 27; vehicle.js TUG's 320 s to start); TANK_RANGE kg of propellant
+TANK_RANGE = (10, 600)
+SHOW_CHOICES = {'mode': ('geo', 'capture', 'dro', 'competitor'), 'scale': ('show',), 'sky': ('still', 'slow', 'off'), 'engine': ('et', 'gt')}
+SHOW_PATHS = {'geo': ('geo', 'seldon-2'), 'dro': ('dro',)}   # the path targets each mode draws (modes.js PATHS). LEO TO DRO is the mission (owner, Oct 26: "we put seldon 1 and it completes the mission from there"): always the DRO
 show = json.loads(json.dumps(SHOW_DEFAULT))
 show_lock = threading.Lock()
 
@@ -459,8 +489,8 @@ show_lock = threading.Lock()
 def show_load():
     try:
         saved = json.loads(SHOW_JSON.read_text())
-        show_update({k: v for k, v in saved.items() if k not in ('reset', 'play', 't')}, save=False)   # a restart is not a reset, and starts playing
-        show['reset'] = int(saved.get('reset', 0))
+        show_update({k: v for k, v in saved.items() if k not in ('reset', 'play', 't', 'calib')}, save=False)   # a restart is not a reset, and starts playing
+        show['reset'] = int(saved.get('reset', 0)); show['calib'] = int(saved.get('calib', 0))
     except (OSError, ValueError, AttributeError):
         pass
 
@@ -473,6 +503,18 @@ def show_update(patch, save=True):
                 if k == 'mode' and patch[k] != show['mode']:
                     show['play'], show['t'] = True, None   # a new mode starts playing from its beginning
                 show[k] = patch[k]
+        p = patch.get('path')   # (before play / t: a mode the path picks starts playing, unless this post says otherwise)
+        if p is None and isinstance(patch.get('transfer'), bool):   # the old on / off (an old phone page or show.json): GEO, or the DRO in LEO TO DRO
+            p = ('dro' if show['mode'] == 'dro' else 'geo') if patch['transfer'] else 'off'
+        if p in ('off', 'geo', 'seldon-2', 'dro'):
+            m = {'seldon-2': 'geo', 'dro': 'dro'}.get(p, 'geo' if p == 'geo' and show['mode'] == 'dro' else show['mode'])   # picking a target goes to the mode that has it (GEO: LEO TO GEO)
+            if m != show['mode']:
+                show['play'], show['t'] = True, None
+            show['mode'], show['path'] = m, p
+        if show['path'] not in ('off',) + SHOW_PATHS.get(show['mode'], ()):
+            show['path'] = 'off'   # a mode switch clears a target the new mode can't show (capture / competitor show none)
+        if show['mode'] == 'dro':
+            show['path'] = 'dro'   # LEO TO DRO: the mission is always drawn, from wherever Seldon-1 is put
         if isinstance(patch.get('play'), bool):
             show['play'] = patch['play']
         if 't' in patch and (patch['t'] is None or (type(patch['t']) in (int, float) and 0 <= patch['t'] <= 1)):
@@ -480,12 +522,34 @@ def show_update(patch, save=True):
         z = patch.get('zoom')
         if type(z) in (int, float) and ZOOM_RANGE[0] <= z <= ZOOM_RANGE[1]:
             show['zoom'] = float(z)
+        isp = patch.get('isp')
+        if isinstance(isp, dict):
+            for k, (lo, hi) in ISP_RANGE.items():
+                if type(isp.get(k)) in (int, float) and lo <= isp[k] <= hi:
+                    show['isp'] = {**show['isp'], k: float(isp[k])}
+        tk = patch.get('tank')
+        if type(tk) in (int, float) and TANK_RANGE[0] <= tk <= TANK_RANGE[1]:
+            show['tank'] = float(tk)
+        rk = patch.get('reach')
+        if rk in ('off', 'et', 'gt') or isinstance(rk, bool):
+            show['reach'] = rk if isinstance(rk, str) else 'et' if rk else 'off'   # (true / false: the first version's on / off, electric)
+        # reach and a path are never on together, and LEO TO DRO has no reach (owner, Oct 27: "reach and path cant be on same time no
+        # reach in DRO mode on phone"): the one this post turns on wins (both: the reach)
+        if show['mode'] == 'dro':
+            show['reach'] = 'off'
+        elif show['reach'] != 'off' and show['path'] != 'off':
+            if rk not in (None, 'off', False):
+                show['path'] = 'off'
+            else:
+                show['reach'] = 'off'
         if isinstance(patch.get('freeze'), bool):
             show['freeze'] = patch['freeze']
         if type(patch.get('beat')) is int and 0 <= patch['beat'] < 100:
             show['beat'] = patch['beat']
         if patch.get('reset') is True:
             show['reset'] += 1
+        if patch.get('calib') is True:   # the phone's Recalibrate: the TV draws its markers, /calibrate fits them
+            show['calib'] += 1
         if isinstance(patch.get('mode_opts'), dict):
             for m, o in patch['mode_opts'].items():
                 if isinstance(o, dict):
@@ -560,7 +624,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tobytes(), 'image/jpeg')
             elif path == '/calib.json':         # current calibration, for the click page to start from
                 self._send(json.dumps({'H': None if state['H'] is None else np.asarray(state['H']).tolist(),
-                                       'screen_mm': state['cfg']['screen_mm'], 'frame_wh': state.get('frame_wh')}).encode(),
+                                       'screen_mm': state['cfg']['screen_mm'], 'frame_wh': state.get('frame_wh'),
+                                       'last': state.get('calib_last')}).encode(),
                            'application/json')
             elif path == '/tuning':
                 with lock:
@@ -668,6 +733,7 @@ class Handler(BaseHTTPRequestHandler):
                 with lock:
                     state['pending'] = None
                 res = {'ok': False, 'error': 'detector not producing frames'}
+            state['calib_last'] = {**res, 't': time.time()}   # the phone reads it from /calib.json after its Recalibrate
             self._send(json.dumps(res).encode(), 'application/json')
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
@@ -958,6 +1024,9 @@ def main():
     ap = argparse.ArgumentParser()
     fast = 'best.onnx' if sys.platform == 'win32' else 'best.mlpackage'
     run = HERE / 'runs/r5-seg-yolo11s-960/weights'          # round 5: + the Oct 12 table (sky page, evening light, hands; Oct 13)
+    if sys.platform == 'win32' and (HERE / 'runs/r5-seg-yolo11s-640in/weights/best.onnx').exists():
+        run = HERE / 'runs/r5-seg-yolo11s-640in/weights'    # the same weights exported at --imgsz 640: 20 ms a frame against 34 at
+                                                             # 960 on the ThinkPad's Radeon, nearly the same detections (Oct 27)
     if not (run / fast).exists():                            # (until it is exported for this laptop: export.py --weights .../best.pt)
         run = HERE / 'runs/r4-seg-yolo11s-960/weights'      # round 4: + Moon + person, outlines (Oct 9)
     for older in ('tv-pol-yolo11s-960', 'tv-sam-yolo11s-960'):   # round 3 (polarized), round 2 (SAM 2 labels)
@@ -971,7 +1040,7 @@ def main():
     ap.add_argument('--camera', default='iphone', help='camera name to look for, e.g. arducam')
     ap.add_argument('--size', default='1920x1080', help='capture size WxH (Arducam: 2048x1536 at 30 fps)')
     ap.add_argument("--conf", type=float, default=0.05)   # low is fine: the tracker ignores one-off far detections
-    ap.add_argument('--imgsz', type=int, default=960)
+    ap.add_argument('--imgsz', type=int, help='model input size (default: 640 for a -640in model, else 960)')
     ap.add_argument('--port', type=int, default=8780)
     ap.add_argument('--local-only', action='store_true', help='listen on 127.0.0.1 only (default: the LAN, for the presenter tablet)')
     ap.add_argument('--no-browser', action='store_true')
@@ -984,6 +1053,7 @@ def main():
     ap.add_argument('--idle-hz', type=float, default=5, help='model runs per second while nothing moves (0: always full speed)')
     ap.add_argument('--video', metavar='FILE', help='rehearsal: read this recording (looped) instead of a camera')
     a = ap.parse_args()
+    a.imgsz = a.imgsz or (640 if '-640in' in str(a.weights) else 960)
     if sys.platform == 'win32':            # it would "fix" onnxruntime-directml by installing the CPU onnxruntime over it
         os.environ.setdefault('YOLO_AUTOINSTALL', 'false')
     from ultralytics import YOLO
@@ -1024,7 +1094,18 @@ def main():
     exposure = FixedRateExposure(cap) if win and a.exposure == 'fixed' and not a.video else None
     state['H'] = load_calib(frame_wh=(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
     dml = win and a.weights.endswith('.onnx') and use_directml()
-    model = YOLO(a.weights, task='segment' if '-seg' in str(a.weights) else 'detect')   # round 4 is an outline (segment) model
+    task = 'segment' if '-seg' in str(a.weights) else 'detect'   # round 4 is an outline (segment) model
+    workers = None
+    if dml:                                # in worker processes, with a spare: a GPU hang costs a frame (model_worker.py)
+        from model_worker import ModelWorkers
+        workers = state['workers'] = ModelWorkers(a.weights, task, log=lambda s: print(s, flush=True))
+        workers.wait_ready()
+        names = workers.names
+        if 'DmlExecutionProvider' not in workers.providers:
+            print(f'WARNING: the model worker opened {workers.providers}, not DirectML', flush=True)
+    else:
+        model = YOLO(a.weights, task=task)
+        names = model.names
     if a.weights.endswith(('.mlpackage', '.onnx')):
         dev_kw = {}
     elif win:
@@ -1038,12 +1119,12 @@ def main():
     grab = state['grab'] = LatestFrame(cap, exposure)
     seq = 0
     print(f'{dev} -> {a.weights} ({backend})   (q quit, s save frame)   calibrated: {state["H"] is not None}   '
-          f'orbit demo: http://localhost:{a.port}')
+          f'orbit demo: http://localhost:{a.port}/demo.html')
     if win and backend.lower().endswith('cpu'):
         print('WARNING: the model is running on the CPU (slow, and it heats the laptop). Use the best.onnx next to best.pt '
               '(export.py) with onnxruntime-directml installed.')
     if not a.no_browser:
-        webbrowser.open(f'http://localhost:{a.port}')
+        webbrowser.open(f'http://localhost:{a.port}/demo.html')   # (the table's page; / is the old index.html, Oct 27: "you are running an old version")
     if a.record:                           # passive collection from the start (and again after a restart)
         grab.next(0)
         state['rec'] = Recorder(grab, a.record, fps=10, active=True)
@@ -1069,25 +1150,25 @@ def main():
             sz = crop_imgsz(crop, (fw, fh), a.imgsz)                 # exported models keep their own fixed size (export.py)
         cx0, cy0, cx1, cy1 = crop
         t0 = time.time()
-        try:
-            r = model.predict(np.ascontiguousarray(frame[cy0:cy1, cx0:cx1]), imgsz=sz, conf=state['tune']['conf'],
-                              agnostic_nms=True, verbose=False, **dev_kw)[0]   # one class per object
-        except Exception as e:             # Windows: a GPU fault/reset kills the DirectML session (DXGI 887A0006, Oct 12).
-            if dml:                        # A new session in this process silently falls back to the CPU (2 fps for hours,
-                print(f'{time.strftime("%H:%M:%S")} model failed ({str(e).strip().splitlines()[-1][-160:]}): exiting '
-                      'for a fresh DirectML device', flush=True)   # Oct 12 21:20): exit; the restart loop starts a clean process
-            raise
+        img = np.ascontiguousarray(frame[cy0:cy1, cx0:cx1])
+        if workers:                        # Windows: a GPU fault kills the DirectML session (DXGI 887A0006, Oct 12, Oct 27):
+            r = workers.predict(img, sz, state['tune']['conf'])   # the spare worker takes over (model_worker.py)
+            if r is None:
+                continue
+        else:
+            r = plain(model.predict(img, imgsz=sz, conf=state['tune']['conf'], agnostic_nms=True, verbose=False,
+                                    **dev_kw)[0])   # one class per object
         ms = 0.9 * ms + 0.1 * (time.time() - t0) * 1000
         state['model_ms'] = ms
         state['model_parts'] = {k: round(0.9 * (state.get('model_parts') or {}).get(k, v) + 0.1 * v, 1)   # ultralytics' own split
-                                for k, v in r.speed.items()}
+                                for k, v in r['speed'].items()}
         per_role, raw = {}, []
-        boxes = [[x1 + cx0, y1 + cy0, x2 + cx0, y2 + cy0] for x1, y1, x2, y2 in r.boxes.xyxy.tolist()]   # crop -> frame px
+        boxes = [[x1 + cx0, y1 + cy0, x2 + cx0, y2 + cy0] for x1, y1, x2, y2 in r['xyxy']]   # crop -> frame px
         scores = colour_scores(frame, boxes)                       # second opinion on identity (colorcheck.py)
-        polys = [p + np.float32([cx0, cy0]) for p in r.masks.xy] if getattr(r, 'masks', None) is not None else [None] * len(boxes)
+        polys = [p + np.float32([cx0, cy0]) for p in r['polys']] if r['polys'] is not None else [None] * len(boxes)
         people = []
-        for k, ((x1, y1, x2, y2), c, s) in enumerate(zip(boxes, r.boxes.cls.int().tolist(), r.boxes.conf.tolist())):
-            role = cfg['map'].get(r.names[c], r.names[c])
+        for k, ((x1, y1, x2, y2), c, s) in enumerate(zip(boxes, r['cls'], r['conf'])):
+            role = cfg['map'].get(names[c], names[c])
             if role == 'person' and s >= PERSON_CONF:            # round 4: outlines of hands / arms -> fingertips (zoom slider)
                 people.append(polys[k])
                 raw.append(((int(x1), int(y1), int(x2), int(y2)), f'person {s:.2f}', (60, 220, 90)))
@@ -1157,6 +1238,11 @@ if __name__ == '__main__':
     except BaseException:                  # exit for real, so a supervisor loop can restart it: a crashed main loop used to
         import traceback                   # leave the camera, server and recorder threads running with no detector
         traceback.print_exc()
-        if state.get('rec'):
-            state['rec'].finish()          # close the current file properly (a video never closed can't be read)
+        if state.get('workers'):
+            state['workers'].close()
+        if state.get('rec'):               # close the current file properly (a video never closed can't be read), 5 s at most
+            t = threading.Thread(target=state['rec'].finish, daemon=True); t.start(); t.join(5)
+        if os.name == 'nt':                # after a GPU hang (887A0006) os._exit sat in the driver's DLL teardown for hours
+            import ctypes                  # (Oct 27, 16:12 and 19:36): TerminateProcess skips it
+            k32 = ctypes.windll.kernel32; k32.TerminateProcess(ctypes.c_void_p(k32.GetCurrentProcess()), 1)
         os._exit(1)

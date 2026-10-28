@@ -153,7 +153,30 @@ check('hand waving over a piece that has not locked yet does not move it', pos(T
 t = run_h(T, [([det('seldon-1', 880 + 45, 400)] + others, [box(760, 400, 100, 100)]) for k in range(FPS)], t)
 check('...nor a detection drifting 45 mm off it under the waving hand', pos(T, 'seldon-1') == put)
 
+T, t = settled()                                                         # carried, put down, and waved over AT ONCE: the hand never
+t = run_h(T, [([det('seldon-1', 600 + 20 * k, 400)] + others, [box(600 + 20 * k, 400, 160, 120)]) for k in range(15)], t)   # leaves (Oct 25)
+t = run_h(T, [([det('seldon-1', 880, 400)] + others, [box(880, 400, 160, 120)])] * 3, t)  # set down, hand still on it for 0.15 s
+put = pos(T, 'seldon-1')
+wave = lambda k: 880 + 110 * np.sin(k * 0.9)                              # the hand sweeps to and fro over it, ~3 times a second
+t = run_h(T, [([det('seldon-1', 880 + 25 * (k % 2), 400 + 30 * (k % 3 - 1))] + others, [box(wave(k), 400, 100, 100)]) for k in range(2 * FPS)], t)
+check('waving straight after putting a piece down (hand never leaves) does not move it', np.hypot(pos(T, 'seldon-1')[0] - put[0], pos(T, 'seldon-1')[1] - put[1]) < 5)
+T, t = settled()                                                         # a carry with a pause in it: the pause locks it (put
+t = run_h(T, [([det('seldon-1', 600 + 20 * k, 400)] + others, [box(600 + 20 * k, 400, 160, 120)]) for k in range(8)], t)   # down), so
+t = run_h(T, [([det('seldon-1', 740, 400)] + others, [box(740, 400, 160, 120)])] * 8, t)  # carrying on is a fresh deliberate move
+t = run_h(T, [([det('seldon-1', 740 + 20 * k, 400)] + others, [box(740 + 20 * k, 400, 160, 120)]) for k in range(12)], t)
+t = run_h(T, [([det('seldon-1', 960, 400)] + others, [box(960, 400, 160, 120)])] * 6, t)
+check('a carry that pauses half-way still ends where the piece is put down', abs(pos(T, 'seldon-1')[0] - 960) < 2)
+
 sz = lambda d, s: {**d, 'size_mm': s}                                     # a Seldon's box is ~150 mm on the diagonal
+T, t = placed()                                                          # the same, with box sizes: what is left in view under the
+t = run(T, [[sz(det('seldon-1', 600, 400), 150), det('seldon-2', 720, 500), det('earth', 300, 400)]] * (2 * FPS), t)   # hand slides
+oth2 = [det('seldon-2', 720, 500), det('earth', 300, 400)]              # along the piece with the hand (a partial view)
+t = run_h(T, [([sz(det('seldon-1', 600 + 20 * k, 400), 150)] + oth2, [box(600 + 20 * k, 400, 160, 120)]) for k in range(15)], t)
+t = run_h(T, [([sz(det('seldon-1', 880, 400), 150)] + oth2, [box(880, 400, 160, 120)])] * 3, t)
+put = pos(T, 'seldon-1')
+t = run_h(T, [([sz(det('seldon-1', 880 + float(np.clip(wave(k) - 880, -40, 40)), 400), 80)] + oth2, [box(wave(k), 400, 100, 100)]) for k in range(2 * FPS)], t)
+check('...nor the partial view the waving hand leaves, sliding along the piece with it', np.hypot(pos(T, 'seldon-1')[0] - put[0], pos(T, 'seldon-1')[1] - put[1]) < 5)
+
 T, t = placed()
 t = run(T, [[sz(det('seldon-1', 600, 400), 150), det('seldon-2', 720, 400), det('earth', 300, 400)]] * (2 * FPS), t)
 t = run_h(T, [([sz(det('seldon-1', 600 + 40 * (k % 2), 400), 80)] + others, [box(680, 400, 100, 60)]) for k in range(2 * FPS)], t)

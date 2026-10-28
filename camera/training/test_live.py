@@ -122,12 +122,44 @@ from http.server import ThreadingHTTPServer
 live.SHOW_JSON = live.Path(tempfile.mkdtemp()) / 'show.json'
 assert live.show_get()['mode'] == 'geo' and live.show_get()['reset'] == 0
 s = live.show_update({'mode': 'dro', 'scale': 'true', 'sky': 'bogus', 'freeze': 'yes', 'mode_opts': {'competitor': {'alt': 'GEO'}}})
-assert s['mode'] == 'dro' and s['scale'] == 'true' and s['sky'] == 'still' and s['freeze'] is False   # bad values ignored
+assert s['mode'] == 'dro' and s['scale'] == 'show' and s['sky'] == 'still' and s['freeze'] is False   # bad values ignored (true scale is gone from the show, Oct 26)
 live.show_update({'beat': 3}); live.show_update({'beat': -1}); live.show_update({'beat': 'x'}); assert live.show_get()['beat'] == 3
 live.show_update({'mode_opts': {'competitor': {'x': 1}}, 'freeze': True, 'reset': True})
 s = live.show_get(); assert s['mode_opts']['competitor'] == {'alt': 'GEO', 'x': 1} and s['freeze'] and s['reset'] == 1
 live.show.update(json.loads(json.dumps(live.SHOW_DEFAULT))); live.show_load()                      # "restart"
 s = live.show_get(); assert s['mode'] == 'dro' and s['freeze'] and s['reset'] == 1, s
+# path / engine (the phone's transfer path): bad values ignored, the target keeps the mode consistent, the old on / off still works
+s = live.show_update({'mode': 'geo', 'path': 'seldon-2', 'engine': 'gt'}); assert s['mode'] == 'geo' and s['path'] == 'seldon-2' and s['engine'] == 'gt', s
+s = live.show_update({'path': 'moon', 'engine': 'warp'}); assert s['path'] == 'seldon-2' and s['engine'] == 'gt', s
+live.show_update({'play': False}); s = live.show_update({'path': 'dro'}); assert s['mode'] == 'dro' and s['path'] == 'dro' and s['play'], s   # the DRO: LEO TO DRO (a new mode plays)
+s = live.show_update({'path': 'geo'}); assert s['mode'] == 'geo' and s['path'] == 'geo', s                 # GEO: LEO TO GEO's (LEO TO DRO is the mission, Oct 26)
+s = live.show_update({'path': 'seldon-2'}); assert s['mode'] == 'geo' and s['path'] == 'seldon-2', s       # Seldon-2: LEO TO GEO
+s = live.show_update({'mode': 'dro'}); assert s['path'] == 'dro', s                                        # LEO TO DRO: the mission, always the DRO
+live.show_update({'path': 'dro'}); s = live.show_update({'mode': 'geo'}); assert s['path'] == 'off', s     # nor the DRO in LEO TO GEO
+live.show_update({'path': 'geo'}); s = live.show_update({'mode': 'dro'}); assert s['path'] == 'dro', s     # (GEO too)
+s = live.show_update({'transfer': False}); assert s['path'] == 'dro' and 'transfer' not in s, s            # the old on / off: in LEO TO DRO the mission stays on
+s = live.show_update({'transfer': True}); assert s['path'] == 'dro', s
+s = live.show_update({'mode': 'geo', 'transfer': True}); assert s['mode'] == 'geo' and s['path'] == 'geo', s
+s = live.show_update({'path': 'off', 'transfer': True}); assert s['path'] == 'off', s                      # path wins over the old key
+s = live.show_update({'path': 'dro', 'play': False, 't': 0.5}); assert s['mode'] == 'dro' and not s['play'] and s['t'] == 0.5, s   # the post's own play / t win over the new mode's
+live.show_update({'mode': 'geo', 'path': 'seldon-2'}); s = live.show_update({'mode': 'capture'}); assert s['path'] == 'off', s       # capture / competitor draw no path: cleared
+s = live.show_update({'path': 'geo'}); assert s['mode'] == 'capture' and s['path'] == 'off', s; s = live.show_update({'transfer': True}); assert s['path'] == 'off', s
+live.SHOW_JSON.write_text(json.dumps({'mode': 'dro', 'transfer': True, 'reset': 1})); live.show.update(json.loads(json.dumps(live.SHOW_DEFAULT))); live.show_load()
+s = live.show_get(); assert s['mode'] == 'dro' and s['path'] == 'dro' and s['engine'] == 'et' and 'transfer' not in s and s['reset'] == 1, s   # an old show.json
+s = live.show_get(); assert s['reach'] == 'off', s                                                       # reach (the phone's Reach row): off / et / gt, off by default
+s = live.show_update({'reach': 'yes'}); assert s['reach'] == 'off', s; s = live.show_update({'mode': 'geo', 'path': 'off', 'reach': 'gt'}); assert s['reach'] == 'gt', s   # (LEO TO GEO, no path: since Oct 27 LEO TO DRO has no reach, and a path turns it off)
+s = live.show_update({'mode': 'geo'}); assert s['reach'] == 'gt', s; s = live.show_update({'reach': True}); assert s['reach'] == 'et', s   # (the first version's true: electric)
+s = live.show_update({'reach': False}); assert s['reach'] == 'off', s
+p0 = live.show_get()['path']   # reach and a path are never on together, and LEO TO DRO has no reach (owner, Oct 27)
+s = live.show_update({'mode': 'geo', 'path': 'geo'}); s = live.show_update({'reach': 'et'}); assert s['reach'] == 'et' and s['path'] == 'off', s   # reach on: the path goes
+s = live.show_update({'path': 'seldon-2'}); assert s['path'] == 'seldon-2' and s['reach'] == 'off', s       # a path on: the reach goes
+s = live.show_update({'path': 'geo', 'reach': 'gt'}); assert s['reach'] == 'gt' and s['path'] == 'off', s   # both in one post: the reach
+s = live.show_update({'mode': 'dro'}); assert s['reach'] == 'off' and s['path'] == 'dro', s                 # LEO TO DRO: no reach
+s = live.show_update({'reach': 'et'}); assert s['reach'] == 'off', s
+s = live.show_update({'mode': 'geo', 'reach': 'off'}); s = live.show_update({'path': p0}); assert s['mode'] == 'geo' and s['reach'] == 'off', s
+s = live.show_get(); assert s['isp'] == {'et': 1000, 'gt': 320} and s['tank'] == 325, s                    # the reach view's sliders: Isp per engine, the tank
+s = live.show_update({'isp': {'et': 800}}); assert s['isp'] == {'et': 800, 'gt': 320}, s; s = live.show_update({'isp': {'gt': 450, 'et': 'x'}, 'tank': 5}); assert s['isp'] == {'et': 800, 'gt': 320} and s['tank'] == 325, s; s = live.show_update({'isp': {'gt': 425}}); assert s['isp']['gt'] == 425, s; live.show_update({'isp': {'gt': 320}})
+s = live.show_update({'tank': 300, 'isp': {'et': 1000}}); assert s['tank'] == 300, s; live.show_update({'tank': 325})
 srv = ThreadingHTTPServer(('127.0.0.1', 0), live.Handler); srv.daemon_threads = True
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 c = http.client.HTTPConnection('127.0.0.1', srv.server_port)

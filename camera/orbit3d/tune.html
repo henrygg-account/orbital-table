@@ -76,6 +76,8 @@ const GROUPS = [
     ['HAND_CAND_MM', 'New piece near hand', 0, 200, 5, 'mm', 'A new piece, or a piece that reappears elsewhere, this close to a hand outline has to be seen for the time below first (a hand called a piece flickers; a carried piece stays). 0 = off.'],
     ['HAND_RELOC_S', 'Time near hand', 0.1, 3, 0.05, 's', 'How long such a detection must persist before it is accepted. Once the hand has left, the usual few frames are enough.'],
     ['CARRY_HOLD_S', 'Carry ends after', 0.05, 1, 0.05, 's', 'A piece moving with a hand on it is followed freely; this long after it last moved, the carry is over and a hand near it can no longer move it (locked or not).'],
+    ['SETTLE_MM', 'Put down within', 2, 20, 1, 'mm', 'A carried piece whose detection stays within this distance...'],
+    ['SETTLE_S', 'Put down after', 0.05, 0.5, 0.05, 's', '...for this long has been put down: it locks there at once, even with the hand still on it, so waving straight after cannot move it.'],
     ['PARTIAL_FRAC', 'Partial view below', 0.3, 1, 0.05, '× full', 'A detection smaller than this share of the usual size of the piece is a partial view (a Seldon mostly covered by a hand).'],
     ['OCCLUDE_FRAC', 'Partial view reach', 0, 1.5, 0.05, '× full', 'A partial view whose centre is within this share of the size of the piece from where it is keeps it seen but never moves it.'],
   ]],

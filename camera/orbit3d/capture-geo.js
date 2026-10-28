@@ -1,6 +1,6 @@
 // capture-geo.js — maths for the CAPTURE / DEFEND and COMPETITOR modes (no DOM; checked by tools/test_capture_geo.mjs).
 // Two-body (Earth) coplanar orbits, counter-clockwise, impulsive burns. Lengths km, times s, angles rad (ccw, y up).
-import * as V from './vehicle.js';   // one set of vehicle numbers for every mode
+const V = await import('./vehicle.js' + new URL(import.meta.url).search);   // one set of vehicle numbers for every mode (cache-busted as this file was: a stale cached vehicle.js broke the page, Oct 26)
 export const MU =398600.4418, R_E = 6378.1, R_LEO = R_E + 400, R_GEO = 42164, L_KM = 384400, G0 = 9.80665;
 const TAU = Math.PI * 2;
 export const wrap = a => { a %= TAU; return a < 0 ? a + TAU : a; };

@@ -90,3 +90,77 @@ html, body { background: var(--gg-black); color: var(--gg-fog-100); font-family:
 .xp .xp-v i { font-style: normal; font-family: var(--font-mono); font-size: .5em; color: var(--gg-fog-200); margin-left: .25em; }
 .xp .xp-n { font-size: max(10px, calc(var(--mm) * 7.5)); color: var(--gg-fog-200); margin-top: calc(var(--mm) * 4); }
 .xp .bad { color: #ff6b5e; }
+
+/* ---- type presets (modes.js TYPES; ?type=, key Y): classes on <html>. Sizes in TV mm, as above ---- */
+html.ty-large .mt-eyebrow, html.ty-large .rail .eyebrow { font-size: calc(var(--mm) * 10); }
+html.ty-large .rail .hero { font-size: calc(var(--mm) * 58); }
+html.ty-large .rail .metric .ml { font-size: calc(var(--mm) * 9.5); }
+html.ty-large .rail .metric .mv { font-size: calc(var(--mm) * 25); }
+html.ty-large .rail .r-msg { font-size: calc(var(--mm) * 18); }
+html.ty-large .mt-label { font-size: calc(var(--mm) * 12); }
+html.ty-large .mt.mt-tag { font-size: calc(var(--mm) * 12); }
+html.ty-large .mt.mt-tag.dim { font-size: calc(var(--mm) * 11); }
+html.ty-large .mt-foot { font-size: calc(var(--mm) * 9); }
+html.ty-xl .mt-eyebrow, html.ty-xl .rail .eyebrow { font-size: calc(var(--mm) * 12); }
+html.ty-xl .rail .hero { font-size: calc(var(--mm) * 64); }
+html.ty-xl .rail .metric .ml { font-size: calc(var(--mm) * 12); }
+html.ty-xl .rail .metric .mv { font-size: calc(var(--mm) * 34); }
+html.ty-xl .rail .r-mets { gap: calc(var(--mm) * 26); }
+html.ty-xl .rail .r-msg { font-size: calc(var(--mm) * 22); }
+html.ty-xl .mt-label { font-size: calc(var(--mm) * 14); }
+html.ty-xl .mt.mt-tag { font-size: calc(var(--mm) * 13); }
+html.ty-xl .mt.mt-tag.dim { font-size: calc(var(--mm) * 12); }
+html.ty-xl .mt-foot { font-size: calc(var(--mm) * 10); }
+/* sans: piece and ring labels in General Sans, mixed case, no tracking (the eyebrows and metric names stay Space Mono) */
+html.ty-sans .mt-label, html.ty-sans .mt.mt-tag, html.ty-sans .mt-foot { font-family: var(--font-display); font-weight: 500; text-transform: none; letter-spacing: .005em; }
+html.ty-sans .mt-label i, html.ty-sans .mt.mt-tag i { font-family: var(--font-display); font-weight: 400; font-size: .8em; letter-spacing: 0; }
+html.ty-sans .mt-foot { font-weight: 400; color: var(--gg-fog-300); }
+/* callout: the moving Seldon's label carries the numbers (name -> target, delta-v big, fuel and time) */
+.mt.call { text-align: left; line-height: 1.15; background: rgba(10,13,13,.72); padding: .45em .75em; border-radius: .35em; }   /* a plate: it may sit over a ring */
+.mt.call .c-v { font-family: var(--font-display); font-weight: 500; font-size: 3.4em; line-height: 1.05; color: var(--gg-white); letter-spacing: -.01em; font-variant-numeric: tabular-nums; margin: .12em 0 .08em; }
+.mt.call .c-v i { font-size: .3em; margin-left: .35em; color: var(--gg-fog-200); }
+.mt.call .c-m { color: var(--gg-fog-100); font-variant-numeric: tabular-nums; }
+
+/* ---- try-out typefaces (Oct 25; tools/get_fonts.py, SIL OFL): Michroma and its variants, one family per preset (no mono) ---- */
+@font-face { font-family: 'Michroma'; src: url('assets/fonts/Michroma-400.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Lexend Zetta'; src: url('assets/fonts/LexendZetta-300.woff2') format('woff2'); font-weight: 300; font-display: swap; }
+@font-face { font-family: 'Lexend Zetta'; src: url('assets/fonts/LexendZetta-400.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Krona One'; src: url('assets/fonts/KronaOne-400.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Syncopate'; src: url('assets/fonts/Syncopate-400.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Syncopate'; src: url('assets/fonts/Syncopate-700.woff2') format('woff2'); font-weight: 700; font-display: swap; }
+@font-face { font-family: 'Orbitron'; src: url('assets/fonts/Orbitron-400.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Orbitron'; src: url('assets/fonts/Orbitron-500.woff2') format('woff2'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'GG Greek'; src: url('assets/fonts/GGGreek-400.woff2') format('woff2'); font-weight: 400; font-display: swap; unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF; }
+@font-face { font-family: 'GG Greek'; src: url('assets/fonts/GGGreek-500.woff2') format('woff2'); font-weight: 500; font-display: swap; unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF; }
+html.fx-michroma, html.fx-mair { --font-display: 'Michroma', 'GG Greek', sans-serif; --font-mono: 'Michroma', 'GG Greek', sans-serif; }
+html.fx-mgs { --font-display: 'General Sans', 'GG Greek', sans-serif; --font-mono: 'General Sans', 'GG Greek', sans-serif; }   /* Michroma for the numbers only */
+html.fx-mgs .rail .hero, html.fx-mgs .rail .metric .mv, html.fx-mgs .mt b { font-family: 'Michroma', 'GG Greek', sans-serif; }
+html.fx-mgs .rail .hero i, html.fx-mgs .rail .metric .mv i { font-family: 'General Sans', 'GG Greek', sans-serif; }
+html.fx-mair .rail .hero, html.fx-mair .rail .metric .mv { letter-spacing: .03em; }   /* airy: tracked caps, quieter units */
+html.fx-mair .rail .metric .ml, html.fx-mair .mt-foot { letter-spacing: .32em; color: var(--gg-fog-400); }
+html.fx-mair .rail i, html.fx-mair .mt i { color: var(--gg-fog-300); }
+html.fx-mair .mt-label, html.fx-mair .mt.mt-tag { letter-spacing: .08em; }
+html.fx-lexend { --font-display: 'Lexend Zetta', 'GG Greek', sans-serif; --font-mono: 'Lexend Zetta', 'GG Greek', sans-serif; }
+html.fx-lexend .rail .hero, html.fx-lexend .rail .metric .mv { font-weight: 400; }
+html.fx-lexend .mt-label, html.fx-lexend .mt.mt-tag, html.fx-lexend .rail i, html.fx-lexend .mt i, html.fx-lexend .rail .metric .ml { font-weight: 300; }
+html.fx-krona { --font-display: 'Krona One', 'GG Greek', sans-serif; --font-mono: 'Krona One', 'GG Greek', sans-serif; }
+html.fx-syncopate { --font-display: 'Syncopate', 'GG Greek', sans-serif; --font-mono: 'Syncopate', 'GG Greek', sans-serif; }
+html.fx-syncopate .rail .hero, html.fx-syncopate .rail .metric .mv { font-weight: 700; }
+html.fx-orbitron { --font-display: 'Orbitron', 'GG Greek', sans-serif; --font-mono: 'Orbitron', 'GG Greek', sans-serif; }
+html[class*="fx-"] .rail .metric .ml, html[class*="fx-"] .mt-foot { letter-spacing: .08em; }   /* caps tracking for a proportional face */
+html.fx-mair .rail .metric .ml, html.fx-mair .mt-foot { letter-spacing: .32em; }
+.dl { font-family: 'GG Greek', sans-serif; font-style: normal; display: inline-block; transform: scaleX(1.18); transform-origin: 0 50%; margin-right: .12em; }   /* the Δ (the wide faces have no Greek) */
+
+/* ---- text over the orbits (Oct 25): a feathered patch of backdrop blur behind each piece of text. A line that runs behind
+   a label stays visible and continuous, just softened there, and the text reads cleanly. The patch fades out at its
+   edges, so there is no visible box. (.mt is position: fixed, so its ::before sits behind its own text.) ---- */
+.mt::before, .rail .hero::before, .rail .metric::before {
+  content: ''; position: absolute; inset: -.35em -.6em; z-index: -1; pointer-events: none;
+  -webkit-backdrop-filter: blur(calc(var(--mm) * 2.2)) brightness(.85); backdrop-filter: blur(calc(var(--mm) * 2.2)) brightness(.85);
+  -webkit-mask: linear-gradient(90deg, transparent, #000 .6em, #000 calc(100% - .6em), transparent), linear-gradient(transparent, #000 .35em, #000 calc(100% - .35em), transparent);
+  -webkit-mask-composite: source-in; mask: linear-gradient(90deg, transparent, #000 .6em, #000 calc(100% - .6em), transparent), linear-gradient(transparent, #000 .35em, #000 calc(100% - .35em), transparent);
+  mask-composite: intersect;
+}
+.rail .hero, .rail .metric { position: relative; isolation: isolate; }
+.mt.call::before { display: none; }   /* the callout has its own plate */
+.mt-label, .mt.mt-tag { text-shadow: none; }   /* the blur patch keeps them legible; the old ink halo hid the line under the text */
